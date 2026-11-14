@@ -1141,3 +1141,153 @@ E:\LSD_Engine\LSD_Engine_batch\engine\rhi\backends\opengl\opengl_device.cpp(1568
 [1134/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\stereo_quant_pred.c.obj
 [1135/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\stereo_find_predictor.c.obj
 [1136/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\laplace.c.obj
+[1137/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\mathops.c.obj
+[1138/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\celt_decoder.c.obj
+[1139/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\celt_encoder.c.obj
+[1140/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\kiss_fft.c.obj
+[1141/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\pitch.c.obj
+[1142/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\mdct.c.obj
+[1143/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\modes.c.obj
+[1144/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\vq.c.obj
+[1145/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\rate.c.obj
+[1146/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\corrMatrix_FLP.c.obj
+[1147/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\find_LPC_FLP.c.obj
+[1148/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\find_LTP_FLP.c.obj
+[1149/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\celt_lpc.c.obj
+[1150/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\quant_bands.c.obj
+[1151/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\find_pred_coefs_FLP.c.obj
+[1152/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\apply_sine_window_FLP.c.obj
+[1153/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\LPC_analysis_filter_FLP.c.obj
+[1154/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\LTP_analysis_filter_FLP.c.obj
+[1155/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\find_pitch_lags_FLP.c.obj
+[1156/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\encode_frame_FLP.c.obj
+[1157/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\process_gains_FLP.c.obj
+[1158/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\noise_shape_analysis_FLP.c.obj
+[1159/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\wrappers_FLP.c.obj
+[1160/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\residual_energy_FLP.c.obj
+[1161/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\regularize_correlations_FLP.c.obj
+[1162/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\LTP_scale_ctrl_FLP.c.obj
+[1163/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\warped_autocorrelation_FLP.c.obj
+[1164/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\LPC_inv_pred_gain_FLP.c.obj
+[1165/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\burg_modified_FLP.c.obj
+[1166/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\bwexpander_FLP.c.obj
+[1167/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\energy_FLP.c.obj
+[1168/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\scale_copy_vector_FLP.c.obj
+[1169/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\scale_vector_FLP.c.obj
+[1170/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\autocorrelation_FLP.c.obj
+[1171/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\inner_product_FLP.c.obj
+[1172/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\k2a_FLP.c.obj
+[1173/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\schur_FLP.c.obj
+[1174/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\pitch_analysis_core_FLP.c.obj
+[1175/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\x86\x86_celt_map.c.obj
+[1176/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\x86\vq_sse2.c.obj
+[1177/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\sort_FLP.c.obj
+[1178/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\x86\celt_lpc_sse4_1.c.obj
+[1179/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\x86\pitch_sse2.c.obj
+[1180/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\x86\pitch_sse.c.obj
+[1181/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\x86\x86_silk_map.c.obj
+[1182/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\x86\x86cpu.c.obj
+[1183/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\x86\pitch_avx.c.obj
+[1184/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\x86\pitch_sse4_1.c.obj
+[1185/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\x86\VAD_sse4_1.c.obj
+[1186/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\x86\NSQ_sse4_1.c.obj
+[1187/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\float\x86\inner_product_FLP_avx2.c.obj
+[1188/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\x86\NSQ_del_dec_sse4_1.c.obj
+[1189/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\x86\VQ_WMat_EC_sse4_1.c.obj
+[1190/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\x86\NSQ_del_dec_avx2.c.obj
+[1191/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\src\world.cpp.obj
+[1192/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\src\curve.cpp.obj
+[1193/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\src\matrix_cache.cpp.obj
+[1194/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\reflect_gen\curve.gen.cpp.obj
+[1195/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\reflect_gen\user_types.gen.cpp.obj
+[1196/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\src\level.cpp.obj
+[1197/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\reflect_gen\abilities.gen.cpp.obj
+[1198/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\src\prefab.cpp.obj
+[1199/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\src\abilities.cpp.obj
+[1200/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\reflect_gen\timeline.gen.cpp.obj
+[1201/1457] Reflecting input.h
+[1202/1457] Reflecting sound_assets.h
+[1203/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\src\timeline.cpp.obj
+[1204/1457] Linking C static library third_party\Debug\quickjs.lib
+[1205/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\reflect_gen\components.gen.cpp.obj
+[1206/1457] Linking C static library third_party\Debug\luajit.lib
+[1207/1457] Linking C static library third_party\Debug\enet.lib
+[1208/1457] Linking C static library third_party\Debug\miniupnpc.lib
+[1209/1457] Linking CXX static library _deps\recastnavigation-build\DetourCrowd\Debug\DetourCrowd-d.lib
+[1210/1457] Linking CXX static library _deps\recastnavigation-build\Recast\Debug\Recast-d.lib
+[1211/1457] Building CXX object third_party\CMakeFiles\lsd_imguizmo.dir\Debug\__\_deps\imguizmo-src\src\ImGuizmo.cpp.obj
+[1212/1457] Linking CXX static library _deps\rmlui-build\Source\Debugger\Debug\rmlui_debugger.lib
+[1213/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\src\water.cpp.obj
+[1214/1457] Building CXX object engine\core\CMakeFiles\lsd_core.dir\Debug\src\console.cpp.obj
+[1215/1457] Building CXX object engine\audio\CMakeFiles\lsd_audio.dir\Debug\src\dsp.cpp.obj
+[1216/1457] Building CXX object engine\world\CMakeFiles\lsd_world.dir\Debug\src\spline.cpp.obj
+[1217/1457] Linking C static library _deps\opus-build\Debug\opus.lib
+[1218/1457] Building CXX object engine\audio\CMakeFiles\lsd_audio.dir\Debug\src\voice_io.cpp.obj
+[1219/1457] Building CXX object engine\ai\CMakeFiles\lsd_ai.dir\Debug\src\behavior_tree.cpp.obj
+[1220/1457] Building CXX object engine\ai\CMakeFiles\lsd_ai.dir\Debug\src\state_tree.cpp.obj
+[1221/1457] Building CXX object engine\ai\CMakeFiles\lsd_ai.dir\Debug\src\smart_object.cpp.obj
+[1222/1457] Building CXX object engine\ai\CMakeFiles\lsd_ai.dir\Debug\src\env_query.cpp.obj
+[1223/1457] Building CXX object engine\audio\CMakeFiles\lsd_audio.dir\Debug\reflect_gen\sound_assets.gen.cpp.obj
+[1224/1457] Linking CXX static library _deps\joltphysics-build\Debug\Jolt.lib
+[1225/1457] Building CXX object engine\input\CMakeFiles\lsd_input.dir\Debug\reflect_gen\input.gen.cpp.obj
+[1226/1457] Building CXX object engine\audio\CMakeFiles\lsd_audio.dir\Debug\src\audio.cpp.obj
+[1227/1457] Linking CXX static library engine\world\Debug\lsd_world.lib
+[1228/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\geometry\runtime\skinning_job.cc for CXX dependencies
+[1229/1457] Building CXX object engine\net\CMakeFiles\lsd_net.dir\Debug\src\voice.cpp.obj
+[1230/1457] Building CXX object engine\input\CMakeFiles\lsd_input.dir\Debug\src\input.cpp.obj
+[1231/1457] Building CXX object engine\core\CMakeFiles\lsd_core.dir\Debug\src\job_system.cpp.obj
+[1232/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\options\options.cc for CXX dependencies
+[1233/1457] Linking CXX static library third_party\Debug\lsd_imguizmo.lib
+[1234/1457] Building CXX object _deps\recastnavigation-build\DetourTileCache\CMakeFiles\DetourTileCache.dir\Debug\Source\DetourTileCacheBuilder.cpp.obj
+[1235/1457] Building CXX object engine\input\CMakeFiles\lsd_input.dir\Debug\src\touch.cpp.obj
+[1236/1457] Linking CXX static library engine\audio\Debug\lsd_audio.lib
+[1237/1457] Building CXX object _deps\recastnavigation-build\DebugUtils\CMakeFiles\DebugUtils.dir\Debug\Source\DebugDraw.cpp.obj
+[1238/1457] Building CXX object _deps\recastnavigation-build\DetourTileCache\CMakeFiles\DetourTileCache.dir\Debug\Source\DetourTileCache.cpp.obj
+[1239/1457] Building CXX object _deps\recastnavigation-build\DebugUtils\CMakeFiles\DebugUtils.dir\Debug\Source\DetourDebugDraw.cpp.obj
+[1240/1457] Generating CXX dyndep file _deps\ozz-build\src\geometry\runtime\CMakeFiles\ozz_geometry.dir\Debug\CXX.dd
+[1241/1457] Building CXX object _deps\recastnavigation-build\DebugUtils\CMakeFiles\DebugUtils.dir\Debug\Source\RecastDebugDraw.cpp.obj
+[1242/1457] Generating CXX dyndep file _deps\ozz-build\src\options\CMakeFiles\ozz_options.dir\Debug\CXX.dd
+[1243/1457] Building CXX object third_party\CMakeFiles\xatlas.dir\Debug\__\_deps\xatlas-src\source\xatlas\xatlas.cpp.obj
+[1244/1457] Building CXX object _deps\recastnavigation-build\DebugUtils\CMakeFiles\DebugUtils.dir\Debug\Source\RecastDump.cpp.obj
+[1245/1457] Reflecting reflect_test_types.h
+[1246/1457] Building CXX object engine\ai\CMakeFiles\lsd_ai.dir\Debug\src\navigation.cpp.obj
+[1247/1457] Linking CXX static library engine\input\Debug\lsd_input.lib
+[1248/1457] Building CXX object engine\debug_ui\CMakeFiles\lsd_debug_ui.dir\Debug\src\details_panel.cpp.obj
+[1249/1457] Linking CXX static library _deps\recastnavigation-build\DetourTileCache\Debug\DetourTileCache-d.lib
+[1250/1457] Building CXX object _deps\ozz-build\src\geometry\runtime\CMakeFiles\ozz_geometry.dir\Debug\skinning_job.cc.obj
+[1251/1457] Building CXX object tests\CMakeFiles\lsd_physics_tests.dir\Debug\physics_tests.cpp.obj
+[1252/1457] Linking CXX static library third_party\Debug\xatlas.lib
+[1253/1457] Building CXX object tests\CMakeFiles\lsd_audio_tests.dir\Debug\audio_tests.cpp.obj
+[1254/1457] Linking CXX static library engine\debug_ui\Debug\lsd_debug_ui.lib
+[1255/1457] Building CXX object tests\CMakeFiles\lsd_world_tests.dir\Debug\world_tests.cpp.obj
+[1256/1457] Linking CXX static library engine\ai\Debug\lsd_ai.lib
+[1257/1457] Building CXX object engine\net\CMakeFiles\lsd_net.dir\Debug\src\join_code.cpp.obj
+[1258/1457] Building CXX object tests\CMakeFiles\lsd_reflect_tests.dir\Debug\reflect_tests.cpp.obj
+[1259/1457] Generating ../../src_fused/ozz_options.cc
+[1260/1457] Linking CXX static library _deps\ozz-build\src\geometry\runtime\Debug\ozz_geometry_d.lib
+[1261/1457] Building CXX object tests\CMakeFiles\lsd_foundation_tests.dir\Debug\foundation_tests.cpp.obj
+[1262/1457] Generating ../../../src_fused/ozz_geometry.cc
+[1263/1457] Building CXX object tests\CMakeFiles\lsd_reflect_tests.dir\Debug\reflect_gen\reflect_test_types.gen.cpp.obj
+[1264/1457] Linking CXX static library _deps\recastnavigation-build\DebugUtils\Debug\DebugUtils-d.lib
+[1265/1457] Generating ../../src_fused/ozz_base.cc
+[1266/1457] Building CXX object tests\CMakeFiles\lsd_ai_tests.dir\Debug\ai_tests.cpp.obj
+[1267/1457] Generating ../../../src_fused/ozz_animation.cc
+[1268/1457] Generating ../../../src_fused/ozz_animation_offline.cc
+[1269/1457] Building CXX object tools\mcp\CMakeFiles\lsd_mcp.dir\Debug\main.cpp.obj
+[1270/1457] Building CXX object engine\net\CMakeFiles\lsd_net.dir\Debug\src\net.cpp.obj
+[1271/1457] Linking CXX executable tests\Debug\lsd_world_tests.exe
+[1272/1457] Linking CXX executable tests\Debug\lsd_audio_tests.exe
+[1273/1457] Building CXX object _deps\ozz-build\src\options\CMakeFiles\ozz_options.dir\Debug\options.cc.obj
+[1274/1457] Linking CXX executable tests\Debug\lsd_reflect_tests.exe
+[1275/1457] Linking CXX static library engine\net\Debug\lsd_net.lib
+[1276/1457] Linking CXX static library _deps\ozz-build\src\options\Debug\ozz_options_d.lib
+[1277/1457] Linking CXX executable tests\Debug\lsd_ai_tests.exe
+[1278/1457] Building CXX object engine\physics\CMakeFiles\lsd_physics.dir\Debug\src\physics.cpp.obj
+[1279/1457] Linking CXX static library engine\physics\Debug\lsd_physics.lib
+[1280/1457] Building CXX object engine\core\CMakeFiles\lsd_core.dir\Debug\src\crash.cpp.obj
+[1281/1457] Linking CXX executable editor\Debug\lsd_mcp.exe
+[1282/1457] Linking CXX static library engine\core\Debug\lsd_core.lib
+[1283/1457] Building CXX object tests\CMakeFiles\lsd_net_tests.dir\Debug\net_tests.cpp.obj
+[1284/1457] Linking CXX executable tests\Debug\lsd_physics_tests.exe
+[1285/1457] Linking CXX executable tests\Debug\lsd_net_tests.exe
+ninja: build stopped: cannot make progress due to previous errors.
