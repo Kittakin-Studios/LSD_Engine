@@ -1,0 +1,1143 @@
+[0/2] Re-checking globbed directories...
+[1/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\allocator.cpp for CXX dependencies
+[2/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\clusterizer.cpp for CXX dependencies
+[3/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\indexanalyzer.cpp for CXX dependencies
+[4/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\indexcodec.cpp for CXX dependencies
+[5/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\indexgenerator.cpp for CXX dependencies
+[6/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\meshletutils.cpp for CXX dependencies
+[7/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\meshletcodec.cpp for CXX dependencies
+[8/1457] Building C object third_party\CMakeFiles\volk.dir\Debug\__\_deps\volk-src\volk.c.obj
+[9/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\opacitymap.cpp for CXX dependencies
+[10/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\overdrawoptimizer.cpp for CXX dependencies
+[11/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\partition.cpp for CXX dependencies
+[12/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\quantization.cpp for CXX dependencies
+[13/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\rasterizer.cpp for CXX dependencies
+[14/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\remesher.cpp for CXX dependencies
+[15/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\simplifier.cpp for CXX dependencies
+[16/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\spatialorder.cpp for CXX dependencies
+[17/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\stripifier.cpp for CXX dependencies
+[18/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\tangentspace.cpp for CXX dependencies
+[19/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\cmake_pch.c.obj
+[20/1457] Building CXX object third_party\CMakeFiles\imgui.dir\Debug\__\_deps\imgui-src\imgui_tables.cpp.obj
+[21/1457] Building CXX object third_party\CMakeFiles\imgui.dir\Debug\__\_deps\imgui-src\imgui_demo.cpp.obj
+[22/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\vcacheoptimizer.cpp for CXX dependencies
+[23/1457] Linking C static library third_party\Debug\volk.lib
+[24/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\vertexfilter.cpp for CXX dependencies
+[25/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\vertexcodec.cpp for CXX dependencies
+[26/1457] Building CXX object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\cmake_pch.cxx.obj
+[27/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\meshoptimizer-src\src\vfetchoptimizer.cpp for CXX dependencies
+[28/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\dynapi\SDL_dynapi.c.obj
+[29/1457] Building CXX object third_party\CMakeFiles\imgui.dir\Debug\__\_deps\imgui-src\imgui_widgets.cpp.obj
+[30/1457] Building CXX object third_party\CMakeFiles\imgui.dir\Debug\__\_deps\imgui-src\imgui_draw.cpp.obj
+[31/1457] Building CXX object third_party\CMakeFiles\imgui.dir\Debug\__\_deps\imgui-src\backends\imgui_impl_sdl3.cpp.obj
+[32/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL_guid.c.obj
+[33/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL_hashtable.c.obj
+[34/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL_hints.c.obj
+[35/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL_list.c.obj
+[36/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL_error.c.obj
+[37/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL_assert.c.obj
+[38/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL.c.obj
+[39/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL_properties.c.obj
+[40/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\atomic\SDL_atomic.c.obj
+[41/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL_utils.c.obj
+[42/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\SDL_audiocvt.c.obj
+[43/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\SDL_audiodev.c.obj
+[44/1457] Building CXX object engine\foundation\CMakeFiles\lsd_foundation.dir\Debug\src\log.cpp.obj
+[45/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\sdl3-src\src\core\windows\pch_cpp.cpp for CXX dependencies
+[46/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\SDL_log.c.obj
+[47/1457] Building CXX object engine\foundation\CMakeFiles\lsd_foundation.dir\Debug\src\allocator.cpp.obj
+[48/1457] Building CXX object engine\foundation\CMakeFiles\lsd_foundation.dir\Debug\src\system_info.cpp.obj
+[49/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\SDL_mixer.c.obj
+[50/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\SDL_audiotypecvt.c.obj
+[51/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\SDL_audioqueue.c.obj
+[52/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\SDL_audioresample.c.obj
+[53/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\SDL_wave.c.obj
+[54/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\core\SDL_core_unsupported.c.obj
+[55/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_categories.c.obj
+[56/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\atomic\SDL_spinlock.c.obj
+[57/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_clipboardevents.c.obj
+[58/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\SDL_audio.c.obj
+[59/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_keysym_to_keycode.c.obj
+[60/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_eventwatch.c.obj
+[61/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_keymap.c.obj
+[62/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_dropevents.c.obj
+[63/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_displayevents.c.obj
+[64/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_keyboard.c.obj
+[65/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\cpuinfo\SDL_cpuinfo.c.obj
+[66/1457] Building CXX object third_party\CMakeFiles\imgui.dir\Debug\__\_deps\imgui-src\imgui.cpp.obj
+[67/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_keysym_to_scancode.c.obj
+[68/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\camera\SDL_camera.c.obj
+[69/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_scancode_tables.c.obj
+[70/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\imKStoUCS.c.obj
+[71/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_quit.c.obj
+[72/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_touch.c.obj
+[73/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_windowevents.c.obj
+[74/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_pen.c.obj
+[75/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\filesystem\SDL_filesystem.c.obj
+[76/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\haptic\SDL_haptic.c.obj
+[77/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\gpu\SDL_gpu.c.obj
+[78/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\sdl3-src\src\core\windows\SDL_gameinput.cpp for CXX dependencies
+[79/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\sdl3-src\src\joystick\gdk\SDL_gameinputjoystick.cpp for CXX dependencies
+[80/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\io\SDL_asyncio.c.obj
+[81/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\io\generic\SDL_asyncio_generic.c.obj
+[82/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_events.c.obj
+[83/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\controller_type.c.obj
+[84/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\main\SDL_runapp.c.obj
+[85/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\sdl3-src\src\video\windows\SDL_windowsgameinput.cpp for CXX dependencies
+[86/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\main\SDL_main_callbacks.c.obj
+[87/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\locale\SDL_locale.c.obj
+[88/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\misc\SDL_url.c.obj
+[89/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\misc\SDL_libusb.c.obj
+[90/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\power\SDL_power.c.obj
+[91/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\SDL_render_unsupported.c.obj
+[92/1457] Generating CXX dyndep file _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\CXX.dd
+[93/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\SDL_yuv_sw.c.obj
+[94/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\events\SDL_mouse.c.obj
+[95/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\SDL_render.c.obj
+[96/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\gpu\SDL_pipeline_gpu.c.obj
+[97/1457] Building CXX object tools\reflect\CMakeFiles\lsd_reflect_gen.dir\Debug\main.cpp.obj
+[98/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\gpu\SDL_render_gpu.c.obj
+[99/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\SDL_steam_virtual_gamepad.c.obj
+[100/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\io\SDL_iostream.c.obj
+[101/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\SDL_joystick.c.obj
+[102/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\ngage\SDL_render_ngage.c.obj
+[103/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\hidapi\SDL_hidapi.c.obj
+[104/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\SDL_gamepad.c.obj
+[105/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\ps2\SDL_render_ps2.c.obj
+[106/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\psp\SDL_render_psp.c.obj
+[107/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\opengles2\SDL_shaders_gles2.c.obj
+[108/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\opengles2\SDL_render_gles2.c.obj
+[109/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\software\SDL_blendfillrect.c.obj
+[110/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\software\SDL_drawline.c.obj
+[111/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\software\SDL_blendline.c.obj
+[112/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\gpu\SDL_shaders_gpu.c.obj
+[113/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\direct3d\SDL_shaders_d3d.c.obj
+[114/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\software\SDL_blendpoint.c.obj
+[115/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\vitagxm\SDL_render_vita_gxm.c.obj
+[116/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\vitagxm\SDL_render_vita_gxm_memory.c.obj
+[117/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\vitagxm\SDL_render_vita_gxm_tools.c.obj
+[118/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\software\SDL_drawpoint.c.obj
+[119/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\software\SDL_triangle.c.obj
+[120/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\software\SDL_render_sw.c.obj
+[121/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\vulkan\SDL_shaders_vulkan.c.obj
+[122/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_crc16.c.obj
+[123/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_crc32.c.obj
+[124/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\direct3d\SDL_render_d3d.c.obj
+[125/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\opengl\SDL_shaders_gl.c.obj
+[126/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_memcpy.c.obj
+[127/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_iconv.c.obj
+[128/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_malloc.c.obj
+[129/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_mslibc.c.obj
+[130/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_murmur3.c.obj
+[131/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_memset.c.obj
+[132/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_memmove.c.obj
+[133/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_qsort.c.obj
+[134/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\opengl\SDL_render_gl.c.obj
+[135/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_random.c.obj
+[136/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\direct3d12\SDL_render_d3d12.c.obj
+[137/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_strtokr.c.obj
+[138/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\direct3d11\SDL_shaders_d3d11.c.obj
+[139/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_stdlib.c.obj
+[140/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\time\SDL_time.c.obj
+[141/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\sensor\SDL_sensor.c.obj
+[142/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\storage\SDL_storage.c.obj
+[143/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_string.c.obj
+[144/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\direct3d12\SDL_shaders_d3d12.c.obj
+[145/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_blit_0.c.obj
+[146/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\direct3d11\SDL_render_d3d11.c.obj
+[147/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_blit.c.obj
+[148/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_blit_1.c.obj
+[149/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_blit_A.c.obj
+[150/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_blit_N.c.obj
+[151/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_RLEaccel.c.obj
+[152/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_blit_copy.c.obj
+[153/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_bmp.c.obj
+[154/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_blit_slow.c.obj
+[155/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_blit_auto.c.obj
+[156/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_clipboard.c.obj
+[157/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_rect.c.obj
+[158/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_rotate.c.obj
+[159/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_fillrect.c.obj
+[160/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_pixels.c.obj
+[161/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\stdlib\SDL_getenv.c.obj
+[162/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_video_unsupported.c.obj
+[163/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\yuv2rgb\yuv_rgb_lsx.c.obj
+[164/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_stretch.c.obj
+[165/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\thread\SDL_thread.c.obj
+[166/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_yuv.c.obj
+[167/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_surface.c.obj
+[168/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_stb.c.obj
+[169/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\timer\SDL_timer.c.obj
+[170/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\render\vulkan\SDL_render_vulkan.c.obj
+[171/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\e_fmod.c.obj
+[172/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\e_exp.c.obj
+[173/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\e_atan2.c.obj
+[174/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\e_log.c.obj
+[175/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\e_rem_pio2.c.obj
+[176/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\e_log10.c.obj
+[177/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\e_pow.c.obj
+[178/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\yuv2rgb\yuv_rgb_std.c.obj
+[179/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\k_cos.c.obj
+[180/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\e_sqrt.c.obj
+[181/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\k_sin.c.obj
+[182/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\k_rem_pio2.c.obj
+[183/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_cos.c.obj
+[184/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_atan.c.obj
+[185/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_fabs.c.obj
+[186/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\k_tan.c.obj
+[187/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_copysign.c.obj
+[188/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_isinf.c.obj
+[189/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_floor.c.obj
+[190/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_isinff.c.obj
+[191/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\yuv2rgb\yuv_rgb_sse.c.obj
+[192/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_egl.c.obj
+[193/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_modf.c.obj
+[194/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_sin.c.obj
+[195/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_isnan.c.obj
+[196/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_scalbn.c.obj
+[197/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_tan.c.obj
+[198/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\libm\s_isnanf.c.obj
+[199/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\dummy\SDL_dummyaudio.c.obj
+[200/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_video.c.obj
+[201/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\dummy\SDL_nullframebuffer.c.obj
+[202/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\disk\SDL_diskaudio.c.obj
+[203/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\virtual\SDL_virtualjoystick.c.obj
+[204/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\camera\dummy\SDL_camera_dummy.c.obj
+[205/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\dummy\SDL_nullvideo.c.obj
+[206/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\core\windows\pch.c.obj
+[207/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\dummy\SDL_nullevents.c.obj
+[208/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\SDL_vulkan_utils.c.obj
+[209/1457] Building CXX object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\core\windows\pch_cpp.cpp.obj
+[210/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\io\windows\SDL_asyncio_windows_ioring.c.obj
+[211/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\core\windows\SDL_hid.c.obj
+[212/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\core\windows\SDL_xinput.c.obj
+[213/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\misc\windows\SDL_sysurl.c.obj
+[214/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\main\windows\SDL_sysmain_runapp.c.obj
+[215/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\directsound\SDL_directsound.c.obj
+[216/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\core\windows\SDL_windows.c.obj
+[217/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\core\windows\SDL_immdevice.c.obj
+[218/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\audio\wasapi\SDL_wasapi.c.obj
+[219/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsclipboard.c.obj
+[220/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsmessagebox.c.obj
+[221/1457] Building CXX object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\core\windows\SDL_gameinput.cpp.obj
+[222/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsframebuffer.c.obj
+[223/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\thread\generic\SDL_syscond.c.obj
+[224/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowskeyboard.c.obj
+[225/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\thread\generic\SDL_sysrwlock.c.obj
+[226/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsmodes.c.obj
+[227/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsevents.c.obj
+[228/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsmouse.c.obj
+[229/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsopengl.c.obj
+[230/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\thread\windows\SDL_syscond_cv.c.obj
+[231/1457] Building CXX object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsgameinput.cpp.obj
+[232/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsrawinput.c.obj
+[233/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsshape.c.obj
+[234/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsopengles.c.obj
+[235/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\thread\windows\SDL_systhread.c.obj
+[236/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\thread\windows\SDL_syssem.c.obj
+[237/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\thread\windows\SDL_sysrwlock_srw.c.obj
+[238/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\thread\windows\SDL_systls.c.obj
+[239/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\thread\windows\SDL_sysmutex.c.obj
+[240/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\storage\generic\SDL_genericstorage.c.obj
+[241/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\storage\steam\SDL_steamstorage.c.obj
+[242/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\locale\windows\SDL_syslocale.c.obj
+[243/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\power\windows\SDL_syspower.c.obj
+[244/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsvulkan.c.obj
+[245/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowsvideo.c.obj
+[246/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\windows\SDL_windowswindow.c.obj
+[247/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_combined.c.obj
+[248/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\filesystem\windows\SDL_sysfsops.c.obj
+[249/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_flydigi.c.obj
+[250/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_gip.c.obj
+[251/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_gamecube.c.obj
+[252/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_8bitdo.c.obj
+[253/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\sensor\windows\SDL_windowssensor.c.obj
+[254/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_luna.c.obj
+[255/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_lg4ff.c.obj
+[256/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_ps4.c.obj
+[257/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\loadso\windows\SDL_sysloadso.c.obj
+[258/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_ps5.c.obj
+[259/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\timer\windows\SDL_systimer.c.obj
+[260/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\time\windows\SDL_systime.c.obj
+[261/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_ps3.c.obj
+[262/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_switch2.c.obj
+[263/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_stadia.c.obj
+[264/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_shield.c.obj
+[265/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_steam_hori.c.obj
+[266/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_steam_triton.c.obj
+[267/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_steamdeck.c.obj
+[268/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_sinput.c.obj
+[269/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_steam.c.obj
+[270/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_switch.c.obj
+[271/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_xbox360.c.obj
+[272/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_report_descriptor.c.obj
+[273/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_xbox360w.c.obj
+[274/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_zuiki.c.obj
+[275/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\tray\windows\SDL_tray.c.obj
+[276/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\haptic\hidapi\SDL_hidapihaptic.c.obj
+[277/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_wii.c.obj
+[278/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_xboxone.c.obj
+[279/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\haptic\hidapi\SDL_hidapihaptic_lg4ff.c.obj
+[280/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\filesystem\windows\SDL_sysfilesystem.c.obj
+[281/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapi_rumble.c.obj
+[282/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\dialog\SDL_dialog.c.obj
+[283/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\process\SDL_process.c.obj
+[284/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\offscreen\SDL_offscreenevents.c.obj
+[285/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\dialog\SDL_dialog_utils.c.obj
+[286/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\hidapi\SDL_hidapijoystick.c.obj
+[287/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\process\windows\SDL_windowsprocess.c.obj
+[288/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\haptic\windows\SDL_windowshaptic.c.obj
+[289/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\offscreen\SDL_offscreenframebuffer.c.obj
+[290/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\windows\SDL_xinputjoystick.c.obj
+[291/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\haptic\windows\SDL_dinputhaptic.c.obj
+[292/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\windows\SDL_dinputjoystick.c.obj
+[293/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\windows\SDL_windowsjoystick.c.obj
+[294/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\tray\SDL_tray_utils.c.obj
+[295/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\main\generic\SDL_sysmain_callbacks.c.obj
+[296/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\offscreen\SDL_offscreenopengles.c.obj
+[297/1457] Linking CXX static library engine\foundation\Debug\lsd_foundation.lib
+[298/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\camera\mediafoundation\SDL_camera_mediafoundation.c.obj
+[299/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\gpu\vulkan\SDL_gpu_vulkan.c.obj
+[300/1457] Building CXX object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\gdk\SDL_gameinputjoystick.cpp.obj
+[301/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\dialog\windows\SDL_windowsdialog.c.obj
+[302/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\platform.cc for CXX dependencies
+[303/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\encode\group_varint.cc for CXX dependencies
+[304/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\offscreen\SDL_offscreenwindow.c.obj
+[305/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\offscreen\SDL_offscreenvideo.c.obj
+[306/1457] Generating CXX dyndep file _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\CXX.dd
+[307/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\io\archive.cc for CXX dependencies
+[308/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\memory\allocator.cc for CXX dependencies
+[309/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\video\offscreen\SDL_offscreenvulkan.c.obj
+[310/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\maths\soa_math_archive.cc for CXX dependencies
+[311/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\maths\math_archive.cc for CXX dependencies
+[312/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\maths\simd_math.cc for CXX dependencies
+[313/1457] Building C object third_party\CMakeFiles\lsd_luajit_minilua.dir\Debug\__\_deps\luajit-src\src\host\minilua.c.obj
+[314/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\maths\simd_math_archive.cc for CXX dependencies
+[315/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\containers\string_archive.cc for CXX dependencies
+[316/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\io\stream.cc for CXX dependencies
+[317/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\maths\box.cc for CXX dependencies
+[318/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\allocator.cpp.obj
+[319/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\base\log.cc for CXX dependencies
+[320/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\indexcodec.cpp.obj
+[321/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\indexanalyzer.cpp.obj
+[322/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\meshletutils.cpp.obj
+[323/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\clusterizer.cpp.obj
+[324/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\indexgenerator.cpp.obj
+[325/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\rasterizer.cpp.obj
+[326/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\gpu\d3d12\SDL_gpu_d3d12.c.obj
+[327/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\partition.cpp.obj
+[328/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\quantization.cpp.obj
+[329/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\meshletcodec.cpp.obj
+[330/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\overdrawoptimizer.cpp.obj
+[331/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\opacitymap.cpp.obj
+[332/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\remesher.cpp.obj
+[333/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\animation_utils.cc for CXX dependencies
+[334/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\vfetchoptimizer.cpp.obj
+[335/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\stripifier.cpp.obj
+[336/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\vcacheoptimizer.cpp.obj
+[337/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\spatialorder.cpp.obj
+[338/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\tangentspace.cpp.obj
+[339/1457] Linking CXX executable tools\reflect\Debug\lsd_reflect_gen.exe
+[340/1457] Building C object third_party\CMakeFiles\ufbx.dir\Debug\__\_deps\ufbx-src\ufbx.c.obj
+[341/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\simplifier.cpp.obj
+[342/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\motion_blending_job.cc for CXX dependencies
+[343/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\vertexfilter.cpp.obj
+[344/1457] Generating CXX dyndep file _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\CXX.dd
+[345/1457] Building CXX object _deps\meshoptimizer-build\CMakeFiles\meshoptimizer.dir\Debug\src\vertexcodec.cpp.obj
+[346/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\ik_aim_job.cc for CXX dependencies
+[347/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\blending_job.cc for CXX dependencies
+[348/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\local_to_model_job.cc for CXX dependencies
+[349/1457] Reflecting color.h
+[350/1457] Reflecting math.h
+[351/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\sampling_job.cc for CXX dependencies
+[352/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\skeleton_utils.cc for CXX dependencies
+[353/1457] Linking CXX static library _deps\meshoptimizer-build\Debug\meshoptimizer.lib
+[354/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\windows\SDL_rawinputjoystick.c.obj
+[355/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\animation.cc for CXX dependencies
+[356/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\ik_two_bone_job.cc for CXX dependencies
+[357/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\platform.cc.obj
+[358/1457] Building C object engine\asset\CMakeFiles\lsd_stb.dir\Debug\src\stb_impl.c.obj
+[359/1457] Linking C static library third_party\Debug\ufbx.lib
+[360/1457] Building C object _deps\sdl3-build\CMakeFiles\SDL3-static.dir\Debug\src\joystick\windows\SDL_windows_gaming_input.c.obj
+[361/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\track_sampling_job.cc for CXX dependencies
+[362/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\skeleton.cc for CXX dependencies
+[363/1457] Linking C executable third_party\Debug\lsd_luajit_minilua.exe
+[364/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\track_triggering_job.cc for CXX dependencies
+[365/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\encode\group_varint.cc.obj
+[366/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\runtime\track.cc for CXX dependencies
+[367/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\memory\allocator.cc.obj
+[368/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\io\archive.cc.obj
+[369/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\maths\math_archive.cc.obj
+[370/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\maths\simd_math.cc.obj
+Ozz libraries were built with SSE2 math implementation
+[371/1457] Linking CXX static library _deps\sdl3-build\Debug\SDL3-static.lib
+[372/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\io\stream.cc.obj
+[373/1457] Generating CXX dyndep file _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\CXX.dd
+[374/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\maths\soa_math_archive.cc.obj
+[375/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\maths\simd_math_archive.cc.obj
+[376/1457] Building CXX object engine\reflect\CMakeFiles\lsd_reflect.dir\Debug\src\reflect.cpp.obj
+[377/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\maths\box.cc.obj
+[378/1457] Building CXX object engine\reflect\CMakeFiles\lsd_reflect.dir\Debug\reflect_gen\math.gen.cpp.obj
+[379/1457] Building CXX object engine\reflect\CMakeFiles\lsd_reflect.dir\Debug\reflect_gen\color.gen.cpp.obj
+[380/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\raw_animation.cc for CXX dependencies
+[381/1457] Linking CXX static library third_party\Debug\imgui.lib
+[382/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\raw_animation_archive.cc for CXX dependencies
+[383/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\additive_animation_builder.cc for CXX dependencies
+[384/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\raw_animation_utils.cc for CXX dependencies
+[385/1457] Linking CXX static library engine\reflect\Debug\lsd_reflect.lib
+[386/1457] Embedding post.hlsl
+[387/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\raw_skeleton.cc for CXX dependencies
+[388/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\motion_extractor.cc for CXX dependencies
+[389/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\animation_builder.cc for CXX dependencies
+[390/1457] Embedding mesh.hlsl
+[391/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\animation_optimizer.cc for CXX dependencies
+[392/1457] Embedding material_prelude.hlsl
+[393/1457] Embedding cull.hlsl
+[394/1457] Embedding gpu_particles.hlsl
+[395/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\containers\string_archive.cc.obj
+[396/1457] Compiling triangle.hlsl (ps ) to SPIR-V
+[397/1457] Compiling triangle.hlsl (vs ) to SPIR-V
+[398/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\raw_skeleton_archive.cc for CXX dependencies
+[399/1457] Compiling lines.hlsl (ps ) to SPIR-V
+[400/1457] Compiling lines.hlsl (vs ) to SPIR-V
+[401/1457] Generating luajit_gen/luajit.h
+[402/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\skeleton_builder.cc for CXX dependencies
+[403/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\raw_track.cc for CXX dependencies
+[404/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\raw_track_utils.cc for CXX dependencies
+[405/1457] Compiling shadow.hlsl (vs ) to SPIR-V
+[406/1457] Compiling shadow.hlsl (vs -DSKINNED) to SPIR-V
+[407/1457] Compiling shadow.hlsl (ps ) to SPIR-V
+[408/1457] Compiling shadow.hlsl (vs -DINSTANCED) to SPIR-V
+[409/1457] Compiling shadow.hlsl (ps -DSKINNED) to SPIR-V
+[410/1457] Compiling shadow.hlsl (ps -DINSTANCED) to SPIR-V
+[411/1457] Compiling ui.hlsl (vs ) to SPIR-V
+[412/1457] Compiling ui.hlsl (ps ) to SPIR-V
+[413/1457] Compiling particle.hlsl (vs ) to SPIR-V
+[414/1457] Compiling particle.hlsl (ps ) to SPIR-V
+[415/1457] Compiling mesh.hlsl (vs_main ) to SPIR-V
+[416/1457] Compiling mesh.hlsl (vs_main -DSKINNED) to SPIR-V
+[417/1457] Compiling mesh.hlsl (vs_main -DINSTANCED) to SPIR-V
+[418/1457] Compiling cull.hlsl (cull_reset) to SPIR-V
+[419/1457] Compiling mesh.hlsl (vs_sky ) to SPIR-V
+[420/1457] Building CXX object _deps\ozz-build\src\base\CMakeFiles\ozz_base.dir\Debug\log.cc.obj
+[421/1457] Compiling cull.hlsl (hiz_down) to SPIR-V
+[422/1457] Compiling cull.hlsl (cull_args) to SPIR-V
+[423/1457] Compiling cull.hlsl (cull_main) to SPIR-V
+[424/1457] Compiling cull.hlsl (morph_main) to SPIR-V
+[425/1457] Compiling mesh.hlsl (ps_sky ) to SPIR-V
+[426/1457] Compiling gpu_particles.hlsl (gpu_particle_vs) to SPIR-V
+[427/1457] Compiling post.hlsl (vs_full) to SPIR-V
+[428/1457] Compiling gpu_particles.hlsl (gpu_particle_sim) to SPIR-V
+[429/1457] Compiling post.hlsl (ps_prefilter) to SPIR-V
+[430/1457] Generating luajit_gen/buildvm_arch.h
+[431/1457] Compiling post.hlsl (ps_up) to SPIR-V
+[432/1457] Compiling post.hlsl (ps_down) to SPIR-V
+[433/1457] Compiling post.hlsl (ps_fxaa) to SPIR-V
+[434/1457] Compiling post.hlsl (ps_composite) to SPIR-V
+[435/1457] Compiling post.hlsl (ps_ao_apply) to SPIR-V
+[436/1457] Compiling post.hlsl (ps_ssr) to SPIR-V
+[437/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\track_builder.cc for CXX dependencies
+[438/1457] Scanning E:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\ozz-src\src\animation\offline\track_optimizer.cc for CXX dependencies
+[439/1457] Compiling post.hlsl (ps_taa) to SPIR-V
+[440/1457] Compiling post.hlsl (ps_ao) to SPIR-V
+[441/1457] Compiling post.hlsl (ps_dof) to SPIR-V
+[442/1457] Building C object third_party\CMakeFiles\lsd_luajit_buildvm.dir\Debug\__\_deps\luajit-src\src\host\buildvm.c.obj
+[443/1457] Compiling post.hlsl (ps_expose) to SPIR-V
+[444/1457] Compiling post.hlsl (ps_meter) to SPIR-V
+[445/1457] Building C object third_party\CMakeFiles\lsd_luajit_buildvm.dir\Debug\__\_deps\luajit-src\src\host\buildvm_fold.c.obj
+[446/1457] Building C object third_party\CMakeFiles\lsd_luajit_buildvm.dir\Debug\__\_deps\luajit-src\src\host\buildvm_asm.c.obj
+[447/1457] Building C object third_party\CMakeFiles\lsd_luajit_buildvm.dir\Debug\__\_deps\luajit-src\src\host\buildvm_lib.c.obj
+[448/1457] Compiling post.hlsl (ps_velocity) to SPIR-V
+[449/1457] Building C object third_party\CMakeFiles\lsd_luajit_buildvm.dir\Debug\__\_deps\luajit-src\src\host\buildvm_peobj.c.obj
+[450/1457] Linking CXX static library _deps\ozz-build\src\base\Debug\ozz_base_d.lib
+[451/1457] Compiling post.hlsl (ps_outline) to SPIR-V
+[452/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\animation_utils.cc.obj
+[453/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\motion_blending_job.cc.obj
+[454/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\ik_aim_job.cc.obj
+[455/1457] Building CXX object engine\asset\CMakeFiles\lsd_stb.dir\Debug\src\tinyexr_impl.cpp.obj
+[456/1457] Compiling post.hlsl (ps_motion) to SPIR-V
+[457/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\local_to_model_job.cc.obj
+[458/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\blending_job.cc.obj
+[459/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairApplyGlobalPose.hlsl
+[460/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairApplyDeltaTransform.hlsl
+[461/1457] Linking CXX static library engine\asset\Debug\lsd_stb.lib
+[462/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairCalculateCollisionPlanes.hlsl
+[463/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairCalculateRenderPositions.hlsl
+[464/1457] Generating CXX dyndep file _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\CXX.dd
+[465/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairGridAccumulate.hlsl
+[466/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairGridClear.hlsl
+[467/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\skeleton_utils.cc.obj
+[468/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\sampling_job.cc.obj
+[469/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairIntegrate.hlsl
+[470/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairGridNormalize.hlsl
+[471/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\track_sampling_job.cc.obj
+[472/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairSkinVertices.hlsl
+[473/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\track_triggering_job.cc.obj
+[474/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairUpdateRoots.hlsl
+[475/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairTeleport.hlsl
+[476/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairSkinRoots.hlsl
+[477/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairUpdateStrands.hlsl
+[478/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairUpdateVelocity.hlsl
+[479/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/TestCompute2.hlsl
+[480/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/TestCompute.hlsl
+[481/1457] Compiling HLSL E:/LSD_Engine/LSD_Engine_batch/build/ci144/_deps/joltphysics-src/Build/..//Jolt/Shaders/HairUpdateVelocityIntegrate.hlsl
+[482/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\ik_two_bone_job.cc.obj
+[483/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\animation.cc.obj
+[484/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\track.cc.obj
+[485/1457] Building CXX object _deps\ozz-build\src\animation\runtime\CMakeFiles\ozz_animation.dir\Debug\skeleton.cc.obj
+[486/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\raw_skeleton.cc.obj
+[487/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\raw_animation.cc.obj
+[488/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\additive_animation_builder.cc.obj
+[489/1457] Linking C executable third_party\Debug\lsd_luajit_buildvm.exe
+[490/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\motion_extractor.cc.obj
+[491/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\raw_animation_utils.cc.obj
+[492/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\skeleton_builder.cc.obj
+[493/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\raw_skeleton_archive.cc.obj
+[494/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\autofit\autofit.c.obj
+[495/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftbase.c.obj
+[496/1457] Linking CXX static library _deps\ozz-build\src\animation\runtime\Debug\ozz_animation_d.lib
+[497/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\raw_animation_archive.cc.obj
+[498/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftbbox.c.obj
+[499/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\raw_track.cc.obj
+[500/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftbdf.c.obj
+[501/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\animation_optimizer.cc.obj
+[502/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\raw_track_utils.cc.obj
+[503/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftgxval.c.obj
+[504/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftglyph.c.obj
+[505/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftcid.c.obj
+[506/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftfstype.c.obj
+[507/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftgasp.c.obj
+[508/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftbitmap.c.obj
+[509/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\animation_builder.cc.obj
+[510/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftotval.c.obj
+[511/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftinit.c.obj
+[512/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftmm.c.obj
+[513/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftpfr.c.obj
+[514/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\track_builder.cc.obj
+[515/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftpatent.c.obj
+[516/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftsynth.c.obj
+[517/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftstroke.c.obj
+[518/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\fttype1.c.obj
+[519/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftwinfnt.c.obj
+[520/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\bzip2\ftbzip2.c.obj
+[521/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\bdf\bdf.c.obj
+[522/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\cache\ftcache.c.obj
+[523/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\cff\cff.c.obj
+[524/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\pcf\pcf.c.obj
+[525/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\lzw\ftlzw.c.obj
+[526/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\gzip\ftgzip.c.obj
+[527/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\cid\type1cid.c.obj
+[528/1457] Compiling mesh.hlsl (ps_main ) to SPIR-V
+[529/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\sdf\sdf.c.obj
+[530/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\raster\raster.c.obj
+[531/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\pfr\pfr.c.obj
+[532/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\psnames\psnames.c.obj
+[533/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\pshinter\pshinter.c.obj
+[534/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\svg\svg.c.obj
+[535/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\smooth\smooth.c.obj
+[536/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\psaux\psaux.c.obj
+[537/1457] Building CXX object _deps\ozz-build\src\animation\offline\CMakeFiles\ozz_animation_offline.dir\Debug\track_optimizer.cc.obj
+[538/1457] Building C object engine\audio\CMakeFiles\lsd_miniaudio.dir\Debug\__\__\_deps\miniaudio-src\extras\nodes\ma_reverb_node\ma_reverb_node.c.obj
+[539/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\sfnt\sfnt.c.obj
+[540/1457] Generating luajit_gen/lj_vm.obj
+[541/1457] Building RC object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\base\ftver.rc.res
+[542/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\builds\windows\ftdebug.c.obj
+[543/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\winfonts\winfnt.c.obj
+[544/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\type42\type42.c.obj
+[545/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\type1\type1.c.obj
+[546/1457] Generating luajit_gen/lj_ffdef.h
+[547/1457] Generating luajit_gen/lj_bcdef.h
+[548/1457] Generating luajit_gen/lj_libdef.h
+[549/1457] Generating luajit_gen/lj_recdef.h
+[550/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\src\truetype\truetype.c.obj
+[551/1457] Building CXX object _deps\recastnavigation-build\Detour\CMakeFiles\Detour.dir\Debug\Source\DetourAlloc.cpp.obj
+[552/1457] Building CXX object _deps\recastnavigation-build\Detour\CMakeFiles\Detour.dir\Debug\Source\DetourAssert.cpp.obj
+[553/1457] Building CXX object _deps\recastnavigation-build\Detour\CMakeFiles\Detour.dir\Debug\Source\DetourCommon.cpp.obj
+[554/1457] Linking CXX static library _deps\ozz-build\src\animation\offline\Debug\ozz_animation_offline_d.lib
+[555/1457] Building C object _deps\freetype-build\CMakeFiles\freetype.dir\Debug\builds\windows\ftsystem.c.obj
+[556/1457] Building CXX object _deps\recastnavigation-build\Detour\CMakeFiles\Detour.dir\Debug\Source\DetourNode.cpp.obj
+[557/1457] Building CXX object _deps\recastnavigation-build\Detour\CMakeFiles\Detour.dir\Debug\Source\DetourNavMeshBuilder.cpp.obj
+[558/1457] Reflecting user_types.h
+[559/1457] Reflecting curve.h
+[560/1457] Building CXX object _deps\recastnavigation-build\Detour\CMakeFiles\Detour.dir\Debug\Source\DetourNavMesh.cpp.obj
+[561/1457] Building CXX object _deps\recastnavigation-build\Detour\CMakeFiles\Detour.dir\Debug\Source\DetourNavMeshQuery.cpp.obj
+[562/1457] Reflecting timeline.h
+[563/1457] Reflecting components.h
+[564/1457] Reflecting abilities.h
+[565/1457] Compiling mesh.hlsl (ps_main -DSKINNED) to SPIR-V
+[566/1457] Building C object third_party\CMakeFiles\quickjs.dir\Debug\__\_deps\quickjs-src\dtoa.c.obj
+[567/1457] Compiling mesh.hlsl (ps_main -DINSTANCED) to SPIR-V
+[568/1457] Building C object third_party\CMakeFiles\quickjs.dir\Debug\__\_deps\quickjs-src\libregexp.c.obj
+[569/1457] Building C object third_party\CMakeFiles\quickjs.dir\Debug\__\_deps\quickjs-src\libunicode.c.obj
+[570/1457] Linking C static library _deps\freetype-build\Debug\freetyped.lib
+[571/1457] Building C object third_party\CMakeFiles\enet.dir\Debug\__\_deps\enet-src\unix.c.obj
+[572/1457] Building C object third_party\CMakeFiles\enet.dir\Debug\__\_deps\enet-src\callbacks.c.obj
+[573/1457] Building C object third_party\CMakeFiles\enet.dir\Debug\__\_deps\enet-src\protocol.c.obj
+[574/1457] Building C object third_party\CMakeFiles\enet.dir\Debug\__\_deps\enet-src\list.c.obj
+[575/1457] Building C object third_party\CMakeFiles\enet.dir\Debug\__\_deps\enet-src\host.c.obj
+[576/1457] Building C object third_party\CMakeFiles\enet.dir\Debug\__\_deps\enet-src\compress.c.obj
+[577/1457] Generating luajit_gen/lj_folddef.h
+[578/1457] Building C object engine\audio\CMakeFiles\lsd_miniaudio.dir\Debug\src\miniaudio_impl.c.obj
+[579/1457] Building C object third_party\CMakeFiles\enet.dir\Debug\__\_deps\enet-src\packet.c.obj
+[580/1457] Building C object third_party\CMakeFiles\enet.dir\Debug\__\_deps\enet-src\peer.c.obj
+[581/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\src\device_selection.cpp.obj
+[582/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\src\color_vision.cpp.obj
+[583/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\src\culling.cpp.obj
+[584/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\src\device_factory.cpp.obj
+[585/1457] Building C object third_party\CMakeFiles\enet.dir\Debug\__\_deps\enet-src\win32.c.obj
+[586/1457] Linking C static library engine\audio\Debug\lsd_miniaudio.lib
+[587/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_base.c.obj
+[588/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\__\__\_deps\imgui-src\backends\imgui_impl_opengl3.cpp.obj
+[589/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_debug.c.obj
+[590/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_buffer.c.obj
+[591/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_bit.c.obj
+[592/1457] Building C object third_party\CMakeFiles\quickjs.dir\Debug\__\_deps\quickjs-src\quickjs.c.obj
+[593/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_ffi.c.obj
+[594/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\__\__\_deps\imgui-src\backends\imgui_impl_vulkan.cpp.obj
+[595/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_init.c.obj
+[596/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_os.c.obj
+[597/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_table.c.obj
+[598/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_string.c.obj
+[599/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_aux.c.obj
+[600/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_io.c.obj
+[601/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_math.c.obj
+[602/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\__\__\_deps\imgui-src\backends\imgui_impl_dx12.cpp.obj
+[603/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_package.c.obj
+[604/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_alloc.c.obj
+[605/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lib_jit.c.obj
+[606/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_assert.c.obj
+[607/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_api.c.obj
+[608/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_bc.c.obj
+[609/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_buf.c.obj
+[610/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_carith.c.obj
+[611/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_bcread.c.obj
+[612/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_asm.c.obj
+[613/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_char.c.obj
+[614/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_cdata.c.obj
+[615/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_cconv.c.obj
+[616/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_cparse.c.obj
+[617/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_ctype.c.obj
+[618/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_debug.c.obj
+[619/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_bcwrite.c.obj
+[620/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_ccall.c.obj
+[621/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_clib.c.obj
+[622/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_ccallback.c.obj
+[623/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_crecord.c.obj
+[624/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_dispatch.c.obj
+[625/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_err.c.obj
+[626/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_lex.c.obj
+[627/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_ffrecord.c.obj
+[628/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_load.c.obj
+[629/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_gc.c.obj
+[630/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_ir.c.obj
+[631/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\backends\opengl\opengl_device.cpp.obj
+FAILED: [code=2] engine/rhi/CMakeFiles/lsd_rhi.dir/Debug/backends/opengl/opengl_device.cpp.obj 
+C:\PROGRA~1\MICROS~1\18\COMMUN~1\VC\Tools\MSVC\1444~1.352\bin\HostX64\x64\cl.exe  /nologo /TP -DIMGUI_IMPL_VULKAN_USE_VOLK -DLSD_PLATFORM_WINDOWS=1 -DLSD_RHI_D3D12=1 -DLSD_RHI_OPENGL=1 -DLSD_RHI_VULKAN=1 -DLSD_VULKAN_HAVE_SPIRV=1 -DNOMINMAX -DVK_NO_PROTOTYPES -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS -DCMAKE_INTDIR=\"Debug\" -IE:\LSD_Engine\LSD_Engine_batch\engine\rhi\include -IE:\LSD_Engine\LSD_Engine_batch\build\ci144\engine\rhi\shader_text -IE:\LSD_Engine\LSD_Engine_batch\build\ci144\engine\rhi\spirv -IE:\LSD_Engine\LSD_Engine_batch\engine\foundation\include -external:IE:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\sdl3-build\include-revision -external:IE:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\sdl3-src\include -external:IE:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\imgui-src -external:IE:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\imgui-src\backends -external:IE:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\volk-src -external:IE:\LSD_Engine\LSD_Engine_batch\build\ci144\_deps\vulkanheaders-src\include -external:W0 /DWIN32 /D_WINDOWS /EHsc /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W4 /permissive- /Zc:preprocessor /utf-8 /showIncludes /Foengine\rhi\CMakeFiles\lsd_rhi.dir\Debug\backends\opengl\opengl_device.cpp.obj /Fdengine\rhi\CMakeFiles\lsd_rhi.dir\Debug\lsd_rhi.pdb /FS -c E:\LSD_Engine\LSD_Engine_batch\engine\rhi\backends\opengl\opengl_device.cpp
+E:\LSD_Engine\LSD_Engine_batch\engine\rhi\backends\opengl\opengl_device.cpp(418): error C2026: string too big, trailing characters truncated
+E:\LSD_Engine\LSD_Engine_batch\engine\rhi\backends\opengl\opengl_device.cpp(746): error C2026: string too big, trailing characters truncated
+E:\LSD_Engine\LSD_Engine_batch\engine\rhi\backends\opengl\opengl_device.cpp(1568): error C2026: string too big, trailing characters truncated
+[632/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_gdbjit.c.obj
+[633/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_func.c.obj
+[634/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_meta.c.obj
+[635/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_opt_dce.c.obj
+[636/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_obj.c.obj
+[637/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_lib.c.obj
+[638/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_opt_split.c.obj
+[639/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_opt_sink.c.obj
+[640/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_serialize.c.obj
+[641/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_parse.c.obj
+[642/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_mcode.c.obj
+[643/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_opt_fold.c.obj
+[644/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_opt_loop.c.obj
+[645/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_opt_mem.c.obj
+[646/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_opt_narrow.c.obj
+[647/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\cmake_pch.cxx.obj
+[648/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_profile.c.obj
+[649/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_prng.c.obj
+[650/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_snap.c.obj
+[651/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_strfmt_num.c.obj
+[652/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_str.c.obj
+[653/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_strfmt.c.obj
+[654/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_strscan.c.obj
+[655/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_record.c.obj
+[656/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_vmmath.c.obj
+[657/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_udata.c.obj
+[658/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_state.c.obj
+[659/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_tab.c.obj
+[660/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\igd_desc_parse.c.obj
+[661/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\minixml.c.obj
+[662/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\upnpcommands.c.obj
+[663/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\upnperrors.c.obj
+[664/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\upnpdev.c.obj
+[665/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\upnpreplyparse.c.obj
+[666/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\portlistingparse.c.obj
+[667/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_vmevent.c.obj
+[668/1457] Building C object third_party\CMakeFiles\luajit.dir\Debug\__\_deps\luajit-src\src\lj_trace.c.obj
+[669/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\AABBTree\AABBTreeBuilder.cpp.obj
+[670/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Compute\ComputeSystem.cpp.obj
+[671/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\Color.cpp.obj
+[672/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\Factory.cpp.obj
+[673/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\IssueReporting.cpp.obj
+[674/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\miniwget.c.obj
+[675/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\minisoap.c.obj
+[676/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\Memory.cpp.obj
+[677/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\minissdpc.c.obj
+[678/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\connecthostport.c.obj
+[679/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\miniupnpc.c.obj
+[680/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\JobSystemWithBarrier.cpp.obj
+[681/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\RTTI.cpp.obj
+[682/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\LinearCurve.cpp.obj
+[683/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\addr_is_reserved.c.obj
+[684/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\JobSystemSingleThreaded.cpp.obj
+[685/1457] Building C object third_party\CMakeFiles\miniupnpc.dir\Debug\__\_deps\miniupnpc-src\miniupnpc\src\receivedata.c.obj
+[686/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\backends\d3d12\d3d12_device.cpp.obj
+[687/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\StringTools.cpp.obj
+[688/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Geometry\ConvexHullBuilder2D.cpp.obj
+[689/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Geometry\OrientedBox.cpp.obj
+[690/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Geometry\ConvexHullBuilder.cpp.obj
+[691/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Geometry\Indexify.cpp.obj
+[692/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Math\Vec3.cpp.obj
+[693/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\Profiler.cpp.obj
+[694/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\ObjectStream\SerializableObject.cpp.obj
+[695/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Body\MotionProperties.cpp.obj
+[696/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\TickCounter.cpp.obj
+[697/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Body\MassProperties.cpp.obj
+[698/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Character\CharacterBase.cpp.obj
+[699/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\BroadPhase\BroadPhase.cpp.obj
+[700/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\Semaphore.cpp.obj
+[701/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Body\BodyCreationSettings.cpp.obj
+[702/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Body\BodyInterface.cpp.obj
+[703/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Core\JobSystemThreadPool.cpp.obj
+[704/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Body\Body.cpp.obj
+[705/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\cmake_pch.cxx.obj
+[706/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\CastSphereVsTriangles.cpp.obj
+[707/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Character\Character.cpp.obj
+[708/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\src\shader_cache.cpp.obj
+[709/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\BroadPhase\BroadPhaseBruteForce.cpp.obj
+[710/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Body\BodyManager.cpp.obj
+[711/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\BroadPhase\BroadPhaseQuadTree.cpp.obj
+[712/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Box.cpp.obj
+[713/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\CastConvexVsTriangles.cpp.obj
+[714/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\GroupFilter.cpp.obj
+[715/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\GroupFilterTable.cpp.obj
+[716/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Clock.cpp.obj
+[717/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\CollisionGroup.cpp.obj
+[718/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\CallbackTexture.cpp.obj
+[719/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\CompiledFilterShader.cpp.obj
+[720/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\CollisionDispatch.cpp.obj
+[721/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\CollideConvexVsTriangles.cpp.obj
+[722/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\EstimateCollisionResponse.cpp.obj
+[723/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ComputedValues.cpp.obj
+[724/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\BroadPhase\QuadTree.cpp.obj
+[725/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ContextInstancer.cpp.obj
+[726/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ContextInstancerDefault.cpp.obj
+[727/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ConvolutionFilter.cpp.obj
+[728/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\BaseXMLParser.cpp.obj
+[729/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ComputeProperty.cpp.obj
+[730/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\CollideSphereVsTriangles.cpp.obj
+[731/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DataControllerDefault.cpp.obj
+[732/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DataModelHandle.cpp.obj
+[733/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DataController.cpp.obj
+[734/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DataTypeRegister.cpp.obj
+[735/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Character\CharacterVirtual.cpp.obj
+[736/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Decorator.cpp.obj
+[737/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DataVariable.cpp.obj
+[738/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Core.cpp.obj
+[739/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DecoratorTiledHorizontal.cpp.obj
+[740/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DataView.cpp.obj
+[741/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DecoratorTiled.cpp.obj
+[742/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DecoratorTiledBox.cpp.obj
+[743/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DecoratorNinePatch.cpp.obj
+[744/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DecoratorGradient.cpp.obj
+[745/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DecoratorShader.cpp.obj
+[746/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DataExpression.cpp.obj
+[747/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DecoratorTiledImage.cpp.obj
+[748/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\EffectSpecification.cpp.obj
+[749/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DocumentHeader.cpp.obj
+[750/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Context.cpp.obj
+[751/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DecoratorTiledVertical.cpp.obj
+[752/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementBackgroundBorder.cpp.obj
+[753/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementInstancer.cpp.obj
+[754/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementDefinition.cpp.obj
+[755/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementScroll.cpp.obj
+[756/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementHandle.cpp.obj
+[757/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DataViewDefault.cpp.obj
+[758/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Event.cpp.obj
+[759/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\EventInstancer.cpp.obj
+[760/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\EventInstancerDefault.cpp.obj
+[761/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\DataModel.cpp.obj
+[762/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementText.cpp.obj
+[763/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementEffects.cpp.obj
+[764/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementDocument.cpp.obj
+[765/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\EventListenerInstancer.cpp.obj
+[766/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementStyle.cpp.obj
+[767/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FileInterfaceDefault.cpp.obj
+[768/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementUtilities.cpp.obj
+[769/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ElementAnimation.cpp.obj
+[770/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEffect.cpp.obj
+[771/1457] Building CXX object engine\rhi\CMakeFiles\lsd_rhi.dir\Debug\backends\vulkan\vulkan_device.cpp.obj
+[772/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\EventSpecification.cpp.obj
+[773/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Filter.cpp.obj
+[774/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FilterBasic.cpp.obj
+[775/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEffectBlur.cpp.obj
+[776/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEffectShadow.cpp.obj
+[777/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEffectGlow.cpp.obj
+[778/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\EventDispatcher.cpp.obj
+[779/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FileInterface.cpp.obj
+[780/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEngineInterface.cpp.obj
+[781/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEffectOutline.cpp.obj
+[782/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FilterBlur.cpp.obj
+[783/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEffectInstancer.cpp.obj
+[784/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Geometry.cpp.obj
+[785/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Log.cpp.obj
+[786/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FilterDropShadow.cpp.obj
+[787/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Profiling.cpp.obj
+[788/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ObserverPtr.cpp.obj
+[789/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Property.cpp.obj
+[790/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Plugin.cpp.obj
+[791/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Memory.cpp.obj
+[792/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertiesIteratorView.cpp.obj
+[793/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\MeshUtilities.cpp.obj
+[794/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Element.cpp.obj
+[795/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\GeometryBackgroundBorder.cpp.obj
+[796/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Math.cpp.obj
+[797/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PluginRegistry.cpp.obj
+[798/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyDictionary.cpp.obj
+[799/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserKeyword.cpp.obj
+[800/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\GeometryBoxShadow.cpp.obj
+[801/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserFilter.cpp.obj
+[802/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserFontEffect.cpp.obj
+[803/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyDefinition.cpp.obj
+[804/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserString.cpp.obj
+[805/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserColorStopList.cpp.obj
+[806/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserTransform.cpp.obj
+[807/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserBoxShadow.cpp.obj
+[808/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserAnimation.cpp.obj
+[809/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserNumber.cpp.obj
+[810/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserDecorator.cpp.obj
+[811/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\RenderInterface.cpp.obj
+[812/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserColour.cpp.obj
+[813/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertyParserRatio.cpp.obj
+[814/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Factory.cpp.obj
+[815/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\ScrollController.cpp.obj
+[816/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StreamFile.cpp.obj
+[817/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StyleSheetContainer.cpp.obj
+[818/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StreamMemory.cpp.obj
+[819/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\RenderManagerAccess.cpp.obj
+[820/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\RenderInterfaceCompatibility.cpp.obj
+[821/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Stream.cpp.obj
+[822/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\PropertySpecification.cpp.obj
+[823/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Spritesheet.cpp.obj
+[824/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\RenderManager.cpp.obj
+[825/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StyleSheetSelector.cpp.obj
+[826/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StyleSheetFactory.cpp.obj
+[827/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\LogDefault.cpp.obj
+[828/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StringUtilities.cpp.obj
+[829/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Template.cpp.obj
+[830/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TemplateCache.cpp.obj
+[831/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TextureLayoutRectangle.cpp.obj
+[832/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TransformPrimitive.cpp.obj
+[833/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Texture.cpp.obj
+[834/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TextureLayoutRow.cpp.obj
+[835/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StyleSheetNode.cpp.obj
+[836/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TextureLayout.cpp.obj
+[837/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TextureLayoutTexture.cpp.obj
+[838/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TransformState.cpp.obj
+[839/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Transform.cpp.obj
+[840/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StyleSheet.cpp.obj
+[841/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TextureDatabase.cpp.obj
+[842/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StyleSheetSpecification.cpp.obj
+[843/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\StyleSheetParser.cpp.obj
+[844/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\XMLNodeHandler.cpp.obj
+[845/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TransformUtilities.cpp.obj
+[846/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\XMLNodeHandlerTemplate.cpp.obj
+[847/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\XMLNodeHandlerHead.cpp.obj
+[848/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\XMLNodeHandlerDefault.cpp.obj
+[849/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Tween.cpp.obj
+[850/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\WidgetScroll.cpp.obj
+[851/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\URL.cpp.obj
+[852/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\XMLNodeHandlerBody.cpp.obj
+[853/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\TypeConverter.cpp.obj
+[854/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\XMLParser.cpp.obj
+[855/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Variant.cpp.obj
+[856/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\XMLParseTools.cpp.obj
+[857/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\InputTypeButton.cpp.obj
+[858/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementFormControlSelect.cpp.obj
+[859/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementFormControlInput.cpp.obj
+[860/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementTextSelection.cpp.obj
+[861/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementFormControl.cpp.obj
+[862/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\InputType.cpp.obj
+[863/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementLabel.cpp.obj
+[864/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\InputTypeSubmit.cpp.obj
+[865/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementForm.cpp.obj
+[866/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\InputTypeRange.cpp.obj
+[867/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementFormControlTextArea.cpp.obj
+[868/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementImage.cpp.obj
+[869/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementTabSet.cpp.obj
+[870/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\InputTypeCheckbox.cpp.obj
+[871/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\ElementProgress.cpp.obj
+[872/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\InputTypeRadio.cpp.obj
+[873/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\WidgetTextInputSingleLine.cpp.obj
+[874/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\XMLNodeHandlerTabSet.cpp.obj
+[875/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\WidgetTextInputSingleLinePassword.cpp.obj
+[876/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\XMLNodeHandlerSelect.cpp.obj
+[877/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\XMLNodeHandlerTextArea.cpp.obj
+[878/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\WidgetTextInputMultiLine.cpp.obj
+[879/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\InputTypeText.cpp.obj
+[880/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\WidgetSlider.cpp.obj
+[881/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\BlockFormattingContext.cpp.obj
+[882/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\ContainerBox.cpp.obj
+[883/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\WidgetTextInput.cpp.obj
+[884/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\InlineBox.cpp.obj
+[885/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\BlockContainer.cpp.obj
+[886/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Elements\WidgetDropDown.cpp.obj
+[887/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\FloatedBoxSpace.cpp.obj
+[888/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\FlexFormattingContext.cpp.obj
+[889/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\FormattingContext.cpp.obj
+[890/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\LayoutBox.cpp.obj
+[891/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\InlineLevelBox.cpp.obj
+[892/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\InlineContainer.cpp.obj
+[893/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\LayoutEngine.cpp.obj
+[894/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\ReplacedFormattingContext.cpp.obj
+[895/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\LayoutDetails.cpp.obj
+[896/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\LayoutPools.cpp.obj
+[897/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEngineDefault\FontFace.cpp.obj
+[898/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\LineBox.cpp.obj
+[899/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEngineDefault\FontEngineInterfaceDefault.cpp.obj
+[900/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEngineDefault\FontFamily.cpp.obj
+[901/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\TableFormattingContext.cpp.obj
+[902/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\SystemInterface.cpp.obj
+[903/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\PhysicsMaterialSimple.cpp.obj
+[904/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\Layout\TableFormattingDetails.cpp.obj
+[905/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEngineDefault\FreeTypeInterface.cpp.obj
+[906/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\NarrowPhaseStats.cpp.obj
+[907/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEngineDefault\FontProvider.cpp.obj
+[908/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\PhysicsMaterial.cpp.obj
+[909/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEngineDefault\FontFaceLayer.cpp.obj
+[910/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\ManifoldBetweenTwoFaces.cpp.obj
+[911/1457] Building CXX object _deps\rmlui-build\Source\Core\CMakeFiles\rmlui_core.dir\Debug\FontEngineDefault\FontFaceHandleDefault.cpp.obj
+[912/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\NarrowPhaseQuery.cpp.obj
+[913/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\BoxShape.cpp.obj
+[914/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\DecoratedShape.cpp.obj
+[915/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\CapsuleShape.cpp.obj
+[916/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\OffsetCenterOfMassShape.cpp.obj
+[917/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\ConvexShape.cpp.obj
+[918/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\CylinderShape.cpp.obj
+[919/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\MutableCompoundShape.cpp.obj
+[920/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\EmptyShape.cpp.obj
+[921/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\ConvexHullShape.cpp.obj
+[922/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\CompoundShape.cpp.obj
+[923/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\PlaneShape.cpp.obj
+[924/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\ScaledShape.cpp.obj
+[925/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\RotatedTranslatedShape.cpp.obj
+[926/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\SphereShape.cpp.obj
+[927/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\TaperedCylinderShape.cpp.obj
+[928/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\Shape.cpp.obj
+[929/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\HeightFieldShape.cpp.obj
+[930/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\TransformedShape.cpp.obj
+[931/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\TaperedCapsuleShape.cpp.obj
+[932/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\StaticCompoundShape.cpp.obj
+[933/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\MeshShape.cpp.obj
+[934/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\ConstraintManager.cpp.obj
+[935/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\GearConstraint.cpp.obj
+[936/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\MotorSettings.cpp.obj
+[937/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\Constraint.cpp.obj
+[938/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Collision\Shape\TriangleShape.cpp.obj
+[939/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\DistanceConstraint.cpp.obj
+[940/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\ConeConstraint.cpp.obj
+[941/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\PathConstraintPathHermite.cpp.obj
+[942/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\PathConstraintPath.cpp.obj
+[943/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\FixedConstraint.cpp.obj
+[944/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\HingeConstraint.cpp.obj
+[945/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\PointConstraint.cpp.obj
+[946/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\SpringSettings.cpp.obj
+[947/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\PathConstraint.cpp.obj
+[948/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Hair\HairShaders.cpp.obj
+[949/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\DeterminismLog.cpp.obj
+[950/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\RackAndPinionConstraint.cpp.obj
+[951/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Hair\RegisterHair.cpp.obj
+[952/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\ContactConstraintManager.cpp.obj
+[953/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\SixDOFConstraint.cpp.obj
+[954/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\PulleyConstraint.cpp.obj
+[955/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\SliderConstraint.cpp.obj
+[956/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\IslandBuilder.cpp.obj
+[957/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\PhysicsUpdateContext.cpp.obj
+[958/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\SwingTwistConstraint.cpp.obj
+[959/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\StateRecorderImpl.cpp.obj
+[960/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Constraints\TwoBodyConstraint.cpp.obj
+[961/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\LargeIslandSplitter.cpp.obj
+[962/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Hair\HairSettings.cpp.obj
+[963/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\VehicleAntiRollBar.cpp.obj
+[964/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\SoftBody\SoftBodyCreationSettings.cpp.obj
+[965/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\VehicleController.cpp.obj
+[966/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\VehicleDifferential.cpp.obj
+[967/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\SoftBody\SoftBodyShape.cpp.obj
+[968/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Hair\Hair.cpp.obj
+[969/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\VehicleTransmission.cpp.obj
+[970/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\VehicleTrack.cpp.obj
+[971/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\MotorcycleController.cpp.obj
+[972/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\VehicleEngine.cpp.obj
+[973/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Ragdoll\Ragdoll.cpp.obj
+[974/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\PhysicsScene.cpp.obj
+[975/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\SoftBody\SoftBodyMotionProperties.cpp.obj
+[976/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\VehicleCollisionTester.cpp.obj
+[977/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\SoftBody\SoftBodySharedSettings.cpp.obj
+[978/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\TrackedVehicleController.cpp.obj
+[979/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\PhysicsSystem.cpp.obj
+[980/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\VehicleConstraint.cpp.obj
+[981/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\Wheel.cpp.obj
+[982/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Skeleton\SkeletonMapper.cpp.obj
+[983/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\TriangleSplitter\TriangleSplitter.cpp.obj
+[984/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Renderer\DebugRendererPlayback.cpp.obj
+[985/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Skeleton\Skeleton.cpp.obj
+[986/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Renderer\DebugRenderer.cpp.obj
+[987/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Renderer\DebugRendererSimple.cpp.obj
+[988/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Renderer\DebugRendererRecorder.cpp.obj
+[989/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\TriangleSplitter\TriangleSplitterMean.cpp.obj
+[990/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\ObjectStream\ObjectStream.cpp.obj
+[991/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\TriangleSplitter\TriangleSplitterBinning.cpp.obj
+[992/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\RegisterTypes.cpp.obj
+[993/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Skeleton\SkeletalAnimation.cpp.obj
+[994/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Skeleton\SkeletonPose.cpp.obj
+[995/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Compute\CPU\ComputeBufferCPU.cpp.obj
+[996/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\ObjectStream\ObjectStreamBinaryOut.cpp.obj
+[997/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\ObjectStream\ObjectStreamBinaryIn.cpp.obj
+[998/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Physics\Vehicle\WheeledVehicleController.cpp.obj
+[999/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Compute\CPU\ComputeQueueCPU.cpp.obj
+[1000/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\ObjectStream\ObjectStreamTextOut.cpp.obj
+[1001/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\ObjectStream\ObjectStreamTextIn.cpp.obj
+[1002/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\ObjectStream\TypeDeclarations.cpp.obj
+[1003/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Shaders\TestComputeWrapper.cpp.obj
+[1004/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\ObjectStream\ObjectStreamOut.cpp.obj
+[1005/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Compute\CPU\ComputeSystemCPU.cpp.obj
+[1006/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\ObjectStream\ObjectStreamIn.cpp.obj
+[1007/1457] Building CXX object _deps\recastnavigation-build\DetourCrowd\CMakeFiles\DetourCrowd.dir\Debug\Source\DetourPathQueue.cpp.obj
+[1008/1457] Building CXX object _deps\recastnavigation-build\DetourCrowd\CMakeFiles\DetourCrowd.dir\Debug\Source\DetourLocalBoundary.cpp.obj
+[1009/1457] Linking CXX static library _deps\recastnavigation-build\Detour\Debug\Detour-d.lib
+[1010/1457] Building CXX object _deps\recastnavigation-build\DetourCrowd\CMakeFiles\DetourCrowd.dir\Debug\Source\DetourPathCorridor.cpp.obj
+[1011/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastAssert.cpp.obj
+[1012/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastFilter.cpp.obj
+[1013/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastAlloc.cpp.obj
+[1014/1457] Building CXX object _deps\recastnavigation-build\DetourCrowd\CMakeFiles\DetourCrowd.dir\Debug\Source\DetourObstacleAvoidance.cpp.obj
+[1015/1457] Building CXX object _deps\recastnavigation-build\DetourCrowd\CMakeFiles\DetourCrowd.dir\Debug\Source\DetourCrowd.cpp.obj
+[1016/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastArea.cpp.obj
+[1017/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastContour.cpp.obj
+[1018/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\Recast.cpp.obj
+[1019/1457] Building CXX object _deps\recastnavigation-build\DetourCrowd\CMakeFiles\DetourCrowd.dir\Debug\Source\DetourProximityGrid.cpp.obj
+[1020/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastLayers.cpp.obj
+[1021/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastRasterization.cpp.obj
+[1022/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastMesh.cpp.obj
+[1023/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastMeshDetail.cpp.obj
+[1024/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Shaders\HairWrapper.cpp.obj
+[1025/1457] Building CXX object _deps\recastnavigation-build\Recast\CMakeFiles\Recast.dir\Debug\Source\RecastRegion.cpp.obj
+[1026/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\opus.c.obj
+[1027/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Compute\DX12\ComputeBufferDX12.cpp.obj
+[1028/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\extensions.c.obj
+[1029/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\opus_decoder.c.obj
+[1030/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Compute\DX12\ComputeSystemDX12Impl.cpp.obj
+[1031/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Compute\DX12\ComputeQueueDX12.cpp.obj
+[1032/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\opus_encoder.c.obj
+[1033/1457] Building CXX object _deps\joltphysics-build\CMakeFiles\Jolt.dir\Debug\__\Jolt\Compute\DX12\ComputeSystemDX12.cpp.obj
+[1034/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\opus_multistream.c.obj
+[1035/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\repacketizer.c.obj
+[1036/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\opus_projection_decoder.c.obj
+[1037/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\opus_multistream_encoder.c.obj
+[1038/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\opus_projection_encoder.c.obj
+[1039/1457] Linking CXX static library _deps\rmlui-build\Source\Core\Debug\rmlui.lib
+[1040/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\opus_multistream_decoder.c.obj
+[1041/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\mlp_data.c.obj
+[1042/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\mapping_matrix.c.obj
+[1043/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\mlp.c.obj
+[1044/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\src\analysis.c.obj
+[1045/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\CNG.c.obj
+[1046/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\code_signs.c.obj
+[1047/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\decode_parameters.c.obj
+[1048/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\init_decoder.c.obj
+[1049/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\decode_core.c.obj
+[1050/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\decode_frame.c.obj
+[1051/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\dec_API.c.obj
+[1052/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\encode_indices.c.obj
+[1053/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\enc_API.c.obj
+[1054/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\decode_indices.c.obj
+[1055/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\decode_pulses.c.obj
+[1056/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\decoder_set_fs.c.obj
+[1057/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\encode_pulses.c.obj
+[1058/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\interpolate.c.obj
+[1059/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\gain_quant.c.obj
+[1060/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\LP_variable_cutoff.c.obj
+[1061/1457] Building CXX object _deps\rmlui-build\Source\Debugger\CMakeFiles\rmlui_debugger.dir\Debug\ElementDebugDocument.cpp.obj
+[1062/1457] Building CXX object _deps\rmlui-build\Source\Debugger\CMakeFiles\rmlui_debugger.dir\Debug\Debugger.cpp.obj
+[1063/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\shell_coder.c.obj
+[1064/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NSQ.c.obj
+[1065/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NLSF_decode.c.obj
+[1066/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\tables_LTP.c.obj
+[1067/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\tables_gain.c.obj
+[1068/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NSQ_del_dec.c.obj
+[1069/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\tables_NLSF_CB_NB_MB.c.obj
+[1070/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\tables_other.c.obj
+[1071/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\PLC.c.obj
+[1072/1457] Building CXX object _deps\rmlui-build\Source\Debugger\CMakeFiles\rmlui_debugger.dir\Debug\DebuggerSystemInterface.cpp.obj
+[1073/1457] Building CXX object _deps\rmlui-build\Source\Debugger\CMakeFiles\rmlui_debugger.dir\Debug\ElementContextHook.cpp.obj
+[1074/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\tables_pitch_lag.c.obj
+[1075/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\tables_NLSF_CB_WB.c.obj
+[1076/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\control_audio_bandwidth.c.obj
+[1077/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\tables_pulses_per_block.c.obj
+[1078/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\VAD.c.obj
+[1079/1457] Building CXX object _deps\rmlui-build\Source\Debugger\CMakeFiles\rmlui_debugger.dir\Debug\ElementLog.cpp.obj
+[1080/1457] Building CXX object _deps\rmlui-build\Source\Debugger\CMakeFiles\rmlui_debugger.dir\Debug\Geometry.cpp.obj
+[1081/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\HP_variable_cutoff.c.obj
+[1082/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\quant_LTP_gains.c.obj
+[1083/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\VQ_WMat_EC.c.obj
+[1084/1457] Building CXX object _deps\rmlui-build\Source\Debugger\CMakeFiles\rmlui_debugger.dir\Debug\DebuggerPlugin.cpp.obj
+[1085/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NLSF_encode.c.obj
+[1086/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NLSF_VQ.c.obj
+[1087/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NLSF_unpack.c.obj
+[1088/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\stereo_LR_to_MS.c.obj
+[1089/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\debug.c.obj
+[1090/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\process_NLSFs.c.obj
+[1091/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NLSF_del_dec_quant.c.obj
+[1092/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\control_SNR.c.obj
+[1093/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\stereo_MS_to_LR.c.obj
+[1094/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\check_control_input.c.obj
+[1095/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\bwexpander_32.c.obj
+[1096/1457] Building CXX object _deps\rmlui-build\Source\Debugger\CMakeFiles\rmlui_debugger.dir\Debug\ElementInfo.cpp.obj
+[1097/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\A2NLSF.c.obj
+[1098/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\control_codec.c.obj
+[1099/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\ana_filt_bank_1.c.obj
+[1100/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\bwexpander.c.obj
+[1101/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\init_encoder.c.obj
+[1102/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\biquad_alt.c.obj
+[1103/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\inner_prod_aligned.c.obj
+[1104/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\decode_pitch.c.obj
+[1105/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\table_LSF_cos.c.obj
+[1106/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\log2lin.c.obj
+[1107/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\pitch_est_tables.c.obj
+[1108/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\LPC_inv_pred_gain.c.obj
+[1109/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NLSF_VQ_weights_laroia.c.obj
+[1110/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\LPC_analysis_filter.c.obj
+[1111/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\lin2log.c.obj
+[1112/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NLSF_stabilize.c.obj
+[1113/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\NLSF2A.c.obj
+[1114/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\resampler.c.obj
+[1115/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\resampler_down2_3.c.obj
+[1116/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\resampler_down2.c.obj
+[1117/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\resampler_rom.c.obj
+[1118/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\sigm_Q15.c.obj
+[1119/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\resampler_private_down_FIR.c.obj
+[1120/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\resampler_private_AR2.c.obj
+[1121/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\resampler_private_up2_HQ.c.obj
+[1122/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\sum_sqr_shift.c.obj
+[1123/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\resampler_private_IIR_FIR.c.obj
+[1124/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\sort.c.obj
+[1125/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\stereo_encode_pred.c.obj
+[1126/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\stereo_decode_pred.c.obj
+[1127/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\LPC_fit.c.obj
+[1128/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\entcode.c.obj
+[1129/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\bands.c.obj
+[1130/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\entenc.c.obj
+[1131/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\entdec.c.obj
+[1132/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\cwrs.c.obj
+[1133/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\celt.c.obj
+[1134/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\stereo_quant_pred.c.obj
+[1135/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\silk\stereo_find_predictor.c.obj
+[1136/1457] Building C object _deps\opus-build\CMakeFiles\opus.dir\Debug\celt\laplace.c.obj
