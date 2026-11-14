@@ -2,16 +2,19 @@
 #include "assistant_core.h"
 #include "skinned_cache.h"
 
+#include "lsd/animation/animation.h"
 #include "lsd/asset/data_asset.h"
 #include "lsd/input/input.h"
 #include "lsd/reflect/reflect.h"
 #include "lsd/world/components.h"
 #include "lsd/world/world.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 namespace lsd::editor::assistant {
 
@@ -59,7 +62,7 @@ STEP 4: The Weapon component (Unreal: a Weapon Actor Component on the Character)
 - Aim (RMB held): the camera's spring arm eases in to Aim Distance and slides over the right shoulder (Unreal: Spring Arm Target Arm Length and Socket Offset); the crosshair turns red.
 - The aim pose, in code: every frame while aiming, lsd.ik_reach puts the hand bone on a point Aim Reach metres from the shoulder along the camera's view, bending the elbow (Unreal: a Two Bone IK node in the Anim Blueprint). The arm comes up and the gun points where the crosshair is, on top of whatever animation plays; its weight follows the aim, so it eases in and out.
 - Shoot (LMB): a ray from the camera through the crosshair (lsd.camera_location + lsd.camera_forward, like Unreal's Line Trace by Channel from the camera), one round less, a tracer line from the gun to the hit. What it hits gets on_damage(self, amount, shooter) on its own script, if it has one (Unreal: Apply Damage / Event AnyDamage).
-- Montages (Unreal's Play Montage with a slot and Layered Blend per Bone): lsd.play_montage(self.entity, "Anim_Reload", 1, "spine_01") plays that animation once on the upper body (spine_01 and every bone under it) while the legs keep their own animation, blended in and out; on_montage_ended(self) runs when it ends. Each shot plays Shoot Montage the same way, the reload plays Reload Montage.
+- Montages (Unreal's Play Montage with a slot and Layered Blend per Bone): lsd.play_montage(self.entity, "Anim_Quaternius_Pistol_Reload", 1, "spine_01") plays that animation once on the upper body (spine_01 and every bone under it) while the legs keep their own animation, blended in and out; on_montage_ended(self) runs when it ends. Each shot plays Shoot Montage the same way, the reload plays Reload Montage.
 - Reload (R): lsd.after(Reload Time, ...) is the timer (Set Timer by Event). Until it fires the HUD says Reloading... and shots are refused, then the magazine is full again.
 - The script only drives the player's character, so the same component on an AI character does nothing until you give it its own logic.
 
@@ -83,8 +86,8 @@ properties = {
   crosshair_size = 6,               -- the dot's size in pixels (0 hides it)
   crosshair_color = "#FFFFFF",      -- the dot's colour (#RRGGBB)
   crosshair_aim_color = "#FF4040",  -- its colour while aiming
-  shoot_montage = "Anim_Aim_Shoot", -- played on the upper body per shot (an animation file's name; "" = none)
-  reload_montage = "Anim_Reload",   -- played on the upper body while reloading
+  shoot_montage = "Anim_Quaternius_Pistol_Shoot",   -- played on the upper body per shot (an animation file's name; "" = none)
+  reload_montage = "Anim_Quaternius_Pistol_Reload", -- played on the upper body while reloading
 }
 
 -- The HUD: the ammo count and the crosshair dot, changed only when a value changed.
@@ -325,6 +328,28 @@ bool apply_gun(EditorState& s, const Lesson& lesson, std::string& report) {
             std::snprintf(socket.bone, sizeof socket.bone, "%s", bone);
             socket.position = {-0.12f, 0.0f, 0.0f};  // in front of the palm; tune in the Mesh Editor > Sockets
             socket.rotation = {0.0f, 0.0f, 180.0f};   // Unreal-style right hands: the bone's +X runs back up the arm
+            // Other rigs (Blender exports: the bone's +Y runs to the fingers): the gun's +X along the longest finger bone.
+            const anim::SkinnedModel& rig = *model->model;
+            const i32 hand = rig.find_joint(bone);
+            std::vector<Mat4> rest(rig.joint_count());
+            anim::rest_locals(rig, rest.data());
+            Vec3 fingers{};
+            for (u32 j = 0; j < rig.joint_count(); ++j) {
+                const Vec3 t{rest[j].at(0, 3), rest[j].at(1, 3), rest[j].at(2, 3)};
+                if (rig.joint_parent(j) == hand && length(t) > length(fingers)) fingers = t;
+            }
+            const f32 ax = std::fabs(fingers.x), ay = std::fabs(fingers.y), az = std::fabs(fingers.z);
+            const f32 sy = fingers.y > 0 ? 1.0f : -1.0f, sz = fingers.z > 0 ? 1.0f : -1.0f;
+            if (ay > ax && ay > az) {
+                socket.position = {0.0f, 0.08f * sy, 0.0f};
+                socket.rotation = {0.0f, 0.0f, 90.0f * sy};
+            } else if (az > ax) {
+                socket.position = {0.0f, 0.0f, 0.08f * sz};
+                socket.rotation = {0.0f, -90.0f * sz, 0.0f};
+            } else if (fingers.x > 0) {
+                socket.position = {0.12f, 0.0f, 0.0f};
+                socket.rotation = {};
+            }
             if (meta.sockets.push_back(socket) && s.registry->save_meta(*mesh_record, meta)) report += std::string("socket weapon_r on ") + bone + "; ";
             else report += "the mesh has no room for another socket; ";
         }

@@ -17,8 +17,8 @@ properties = {
   crosshair_size = 6,               -- the dot's size in pixels (0 hides it)
   crosshair_color = "#FFFFFF",      -- the dot's colour (#RRGGBB)
   crosshair_aim_color = "#FF4040",  -- its colour while aiming
-  shoot_montage = "Anim_Aim_Shoot", -- played on the upper body per shot (an animation file's name; "" = none)
-  reload_montage = "Anim_Reload",   -- played on the upper body while reloading
+  shoot_montage = "Anim_Quaternius_Pistol_Shoot",   -- played on the upper body per shot (an animation file's name; "" = none)
+  reload_montage = "Anim_Quaternius_Pistol_Reload", -- played on the upper body while reloading
 }
 
 -- The HUD: the ammo count and the crosshair dot, changed only when a value changed.

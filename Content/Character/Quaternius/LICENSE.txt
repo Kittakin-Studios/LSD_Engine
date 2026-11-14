@@ -1,4 +1,4 @@
-The files in this folder (SK_Quaternius_Male.glb, Anim_Quaternius_UAL.glb and the T_Quaternius_*.png
+The files in this folder (SK_Quaternius_Male.glb, the Anim_Quaternius_*.glb takes and the T_Quaternius_*.png
 textures) are by Quaternius (https://quaternius.com), released under CC0 1.0 Universal
 (Public Domain Dedication): https://creativecommons.org/publicdomain/zero/1.0/
 
@@ -13,5 +13,6 @@ Sources (the free Standard versions, downloaded 2026-11-14):
 Changes made for LSD_Engine: the character's glTF + .bin became one GLB, its textures were scaled
 to 1024 px and renamed T_Quaternius_*; the animation file keeps 13 of its takes (Idle_Loop, Walk_Loop,
 Jog_Fwd_Loop, Sprint_Loop, Jump_Start, Jump_Loop, Jump_Land, Crouch_Idle_Loop, Crouch_Fwd_Loop,
-Pistol_Idle_Loop, Pistol_Aim_Neutral, Pistol_Shoot, Pistol_Reload, in that order: clip 0..12).
+Pistol_Idle_Loop, Pistol_Aim_Neutral, Pistol_Shoot, Pistol_Reload, in that order: clip 0..12);
+Anim_Quaternius_Pistol_Shoot.glb and Anim_Quaternius_Pistol_Reload.glb hold one take each (for montages).
 No attribution is required by CC0; it is given here anyway. Thank you, Quaternius.
