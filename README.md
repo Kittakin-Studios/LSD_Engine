@@ -8,8 +8,7 @@ A data-oriented, editor-first 3D game engine by Kittakin Studios.
 - **Scaling:** picks the best GPU automatically, sizes memory use to live VRAM and RAM budgets, scales jobs to CPU cores
 - **Editor:** Unreal-style workflow — Content Browser, asset editors, Details panel, Play-in-Editor
 
-The full plan (architecture, feature spec, editor layout, roadmap) lives in the
-The full documentation is in [`docs/`](docs/).
+The full documentation (manual, tutorials, architecture, roadmap) is in [`docs/`](docs/).
 
 ## Status
 
@@ -102,9 +101,19 @@ third_party/    vendored or fetched dependencies
 
 LSD_Engine is written from scratch. See [`docs/CLEAN_ROOM.md`](docs/CLEAN_ROOM.md) before contributing.
 
+## Contributing
+
+Issues and pull requests are welcome. Before you send code:
+
+- Read [`docs/CLEAN_ROOM.md`](docs/CLEAN_ROOM.md): ideas from public talks and papers only, never code or data from other engines.
+- Keep both compilers at 0 warnings (MSVC `/W4`, Clang `-Wall -Wextra -Wpedantic -Wshadow -Wconversion`) and `ctest` passing.
+- New dependencies must be permissive (MIT, BSD, zlib, Apache-2.0, public domain), pinned in `third_party/CMakeLists.txt`
+  and listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- Sample content in `Content/` must be your own work or CC0.
+
 ## License
 
-Proprietary — Copyright (c) 2026 Kittakin Studios (Richard Pauli, aka Charlize Pauli). All rights reserved. See [LICENSE](LICENSE).
+MIT — Copyright (c) 2026 Kittakin Studios. See [LICENSE](LICENSE).
 Third-party components keep their own licences. The full list of dependencies, versions and
 licences is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — ship it (or its FreeType
 credit line) with the engine, and keep FreeType built under its permissive FreeType Licence.

@@ -295,10 +295,40 @@ BSD 3-Clause licence (full text in the Opus source tree, LICENSE.BSD).
 
 ## Tracy — v0.11.1 — BSD-3-Clause
 
-Copyright © Marcin Krzyżanowski (wolfpld).
+Copyright © Bartosz Taudul (wolfpld) and contributors.
 
 ```
 BSD 3-Clause licence (full text in the Tracy source tree, LICENSE).
+```
+
+---
+
+## tinyexr — v1.0.12 — BSD-3-Clause
+
+Copyright © 2014-2024 Syoyo Fujita and many contributors.
+
+```
+BSD 3-Clause licence (full text in the tinyexr source tree, LICENSE / tinyexr.h).
+```
+
+---
+
+## miniupnpc — miniupnpc_2_2_8 — BSD-3-Clause
+
+Copyright © 2005-2024 Thomas Bernard.
+
+```
+BSD 3-Clause licence (full text in the miniupnp source tree, miniupnpc/LICENSE).
+```
+
+---
+
+## xatlas — `f700c779` — MIT
+
+Copyright © 2018-2020 Jonathan Young; based on thekla_atlas (Ignacio Castaño, MIT).
+
+```
+MIT licence (full text in the xatlas source tree, LICENSE).
 ```
 
 ---

@@ -1,1460 +1,1605 @@
 {
   "lsd_level": 1,
   "world_settings": {
-      "kill_z": -50,
-      "gravity": 9.81000042,
-      "exposure_ev100": 1.5,
-      "game_mode": "",
-      "level_script": "61ec93f1f731bef04bfebb7f1fe3234b",
-      "navigation": {
-        "agent_radius": 0.400000006,
-        "agent_height": 1.79999995,
-        "max_step_height": 0.449999988,
-        "max_slope": 45,
-        "cell_size": 0.150000006,
-        "runtime_rebuild": false
-      },
-      "lightmap_resolution": 3,
-      "dynamic_gi": false,
-      "hlod_enabled": true,
-      "hlod_cell_size": 50,
-      "hlod_distance": 100
-    },
-  "entities": [
-    {"id": 0, "name": "Sun", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": 0,
-        "z": 10
-      },
-      "rotation": {
-        "x": 0,
-        "y": 50,
-        "z": 30
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "DirectionalLight": {
-      "color": {
-        "r": 1,
-        "g": 1,
-        "b": 1,
-        "a": 1
-      },
-      "intensity": 10,
-      "use_temperature": false,
-      "temperature": 6500,
-      "cast_shadows": true,
-      "shadow_distance": 60,
-      "contact_shadow_length": 0
-    }},
-    {"id": 1, "name": "Sky", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "Sky": {
-      "atmosphere": true,
-      "zenith": {
-        "r": 0.184313729,
-        "g": 0.435294122,
-        "b": 0.768627465,
-        "a": 1
-      },
-      "horizon": {
-        "r": 0.721568644,
-        "g": 0.823529422,
-        "b": 0.917647064,
-        "a": 1
-      },
-      "ground": {
-        "r": 0.290196091,
-        "g": 0.274509817,
-        "b": 0.250980407,
-        "a": 1
-      },
-      "brightness": 1,
-      "sun_disc": true,
-      "sun_size": 0.800000012,
-      "sun_color": {
-        "r": 1,
-        "g": 0.949019611,
-        "b": 0.839215696,
-        "a": 1
-      },
-      "hdri": ""
-    }},
-    {"id": 2, "name": "Floor", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": 0,
-        "z": -0.100000001
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 40,
-        "y": 40,
-        "z": 0.200000003
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.541176498,
-        "g": 0.541176498,
-        "b": 0.556862772,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 3, "name": "Wall", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -20,
-        "y": 0,
-        "z": 1.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.5,
-        "y": 40,
-        "z": 3
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.431372553,
-        "g": 0.431372553,
-        "b": 0.454901963,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 4, "name": "Wall", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 20,
-        "y": 0,
-        "z": 1.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.5,
-        "y": 40,
-        "z": 3
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.431372553,
-        "g": 0.431372553,
-        "b": 0.454901963,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 5, "name": "Wall", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": -20,
-        "z": 1.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 40,
-        "y": 0.5,
-        "z": 3
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.431372553,
-        "g": 0.431372553,
-        "b": 0.454901963,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 6, "name": "Wall", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": 20,
-        "z": 1.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 40,
-        "y": 0.5,
-        "z": 3
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.431372553,
-        "g": 0.431372553,
-        "b": 0.454901963,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 7, "name": "Ramp", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 6,
-        "y": 6,
-        "z": 1
-      },
-      "rotation": {
-        "x": 0,
-        "y": -18,
-        "z": 0
-      },
-      "scale": {
-        "x": 6,
-        "y": 4,
-        "z": 0.300000012
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.815686285,
-        "g": 0.541176498,
-        "b": 0.235294119,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 1,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 8, "name": "Step", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -6,
-        "y": 6,
-        "z": 0.150000006
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 3,
-        "z": 0.300000012
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.611764729,
-        "g": 0.611764729,
-        "b": 0.643137276,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 9, "name": "Step", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -6.80000019,
-        "y": 6,
-        "z": 0.450000018
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 3,
-        "z": 0.900000036
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.611764729,
-        "g": 0.611764729,
-        "b": 0.643137276,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 10, "name": "Step", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -7.5999999,
-        "y": 6,
-        "z": 0.75
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 3,
-        "z": 1.5
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.611764729,
-        "g": 0.611764729,
-        "b": 0.643137276,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 11, "name": "Step", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -8.39999962,
-        "y": 6,
-        "z": 1.05000007
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 3,
-        "z": 2.10000014
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.611764729,
-        "g": 0.611764729,
-        "b": 0.643137276,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 12, "name": "Step", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -9.19999981,
-        "y": 6,
-        "z": 1.35000002
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 3,
-        "z": 2.70000005
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.611764729,
-        "g": 0.611764729,
-        "b": 0.643137276,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 13, "name": "Step", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -10,
-        "y": 6,
-        "z": 1.64999998
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 3,
-        "z": 3.29999995
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.611764729,
-        "g": 0.611764729,
-        "b": 0.643137276,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 14, "name": "Ledge", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -12,
-        "y": 6,
-        "z": 1.89999998
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 4,
-        "y": 6,
-        "z": 0.200000003
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.611764729,
-        "g": 0.611764729,
-        "b": 0.643137276,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 15, "name": "Column", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -6,
-        "y": -8,
-        "z": 2
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 0.800000012,
-        "z": 4
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.486274511,
-        "g": 0.486274511,
-        "b": 0.517647088,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 16, "name": "Column", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -2,
-        "y": -8,
-        "z": 2
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 0.800000012,
-        "z": 4
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.486274511,
-        "g": 0.486274511,
-        "b": 0.517647088,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 17, "name": "Column", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 2,
-        "y": -8,
-        "z": 2
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 0.800000012,
-        "z": 4
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.486274511,
-        "g": 0.486274511,
-        "b": 0.517647088,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 18, "name": "Column", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 6,
-        "y": -8,
-        "z": 2
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 0.800000012,
-        "z": 4
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.486274511,
-        "g": 0.486274511,
-        "b": 0.517647088,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    }},
-    {"id": 19, "name": "Crate", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 2,
-        "y": -3,
-        "z": 0.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.784313738,
-        "g": 0.627451003,
-        "b": 0.376470596,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "RigidBody": {
-      "shape": 0,
-      "lock_2d": false,
-      "mass": 10,
-      "friction": 0.5,
-      "bounciness": 0,
-      "physical_material": "",
-      "collision_preset": 0,
-      "kinematic": false
-    }},
-    {"id": 20, "name": "Crate", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 3.20000005,
-        "y": -3,
-        "z": 0.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.784313738,
-        "g": 0.627451003,
-        "b": 0.376470596,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "RigidBody": {
-      "shape": 0,
-      "lock_2d": false,
-      "mass": 10,
-      "friction": 0.5,
-      "bounciness": 0,
-      "physical_material": "",
-      "collision_preset": 0,
-      "kinematic": false
-    }},
-    {"id": 21, "name": "Crate", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 4.4000001,
-        "y": -3,
-        "z": 0.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.784313738,
-        "g": 0.627451003,
-        "b": 0.376470596,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "RigidBody": {
-      "shape": 0,
-      "lock_2d": false,
-      "mass": 10,
-      "friction": 0.5,
-      "bounciness": 0,
-      "physical_material": "",
-      "collision_preset": 0,
-      "kinematic": false
-    }},
-    {"id": 22, "name": "Crate", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 2,
-        "y": -4.19999981,
-        "z": 0.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.784313738,
-        "g": 0.627451003,
-        "b": 0.376470596,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "RigidBody": {
-      "shape": 0,
-      "lock_2d": false,
-      "mass": 10,
-      "friction": 0.5,
-      "bounciness": 0,
-      "physical_material": "",
-      "collision_preset": 0,
-      "kinematic": false
-    }},
-    {"id": 23, "name": "Crate", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 3.20000005,
-        "y": -4.19999981,
-        "z": 0.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.784313738,
-        "g": 0.627451003,
-        "b": 0.376470596,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "RigidBody": {
-      "shape": 0,
-      "lock_2d": false,
-      "mass": 10,
-      "friction": 0.5,
-      "bounciness": 0,
-      "physical_material": "",
-      "collision_preset": 0,
-      "kinematic": false
-    }},
-    {"id": 24, "name": "Crate", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 4.4000001,
-        "y": -4.19999981,
-        "z": 0.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.784313738,
-        "g": 0.627451003,
-        "b": 0.376470596,
-        "a": 1
-      },
-      "collision": true,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "RigidBody": {
-      "shape": 0,
-      "lock_2d": false,
-      "mass": 10,
-      "friction": 0.5,
-      "bounciness": 0,
-      "physical_material": "",
-      "collision_preset": 0,
-      "kinematic": false
-    }},
-    {"id": 25, "name": "Player", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": 0,
-        "z": 0.0500000007
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 90
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
-      }
-    },
-     "Character": {
-      "mapping_context": "",
-      "move_action": "",
-      "look_action": "",
-      "jump_action": "",
-      "side_scroller": false,
-      "motion_matching": false,
-      "motion_database": "",
-      "walk_speed": 5,
-      "jump_speed": 5,
+    "kill_z": -50,
+    "gravity": 9.81000042,
+    "exposure_ev100": 1.5,
+    "game_mode": "",
+    "level_script": "61ec93f1f731bef04bfebb7f1fe3234b",
+    "navigation": {
+      "agent_radius": 0.400000006,
+      "agent_height": 1.79999995,
+      "max_step_height": 0.449999988,
       "max_slope": 45,
-      "step_height": 0.400000006,
-      "height": 1.79999995,
-      "radius": 0.349999994,
-      "eye_height": 1.64999998,
-      "look_sensitivity": 0.150000006,
-      "invert_look_y": false,
-      "camera_distance": 3.5,
-      "camera_offset": {
-        "x": 0,
-        "y": -0.5,
-        "z": 0.200000003
+      "cell_size": 0.150000006,
+      "runtime_rebuild": false
+    },
+    "lightmap_resolution": 3,
+    "dynamic_gi": false,
+    "hlod_enabled": true,
+    "hlod_cell_size": 50,
+    "hlod_distance": 100
+  },
+  "entities": [
+    {
+      "id": 0,
+      "name": "Sun",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        },
+        "rotation": {
+          "x": 0,
+          "y": 50,
+          "z": 30
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
       },
-      "crouch_action": "",
-      "crouch_height": 1.10000002,
-      "crouch_speed": 2.5,
-      "swim_speed": 3
-    }},
-    {"id": 26, "name": "Body", "parent": 25,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 1,
-        "y": 1,
-        "z": 1
+      "DirectionalLight": {
+        "color": {
+          "r": 1,
+          "g": 1,
+          "b": 1,
+          "a": 1
+        },
+        "intensity": 10,
+        "use_temperature": false,
+        "temperature": 6500,
+        "cast_shadows": true,
+        "shadow_distance": 60,
+        "contact_shadow_length": 0
       }
     },
-     "SkeletalMesh": {
-      "mesh": "68c55f138f7dc46fa023ad12c9da1467",
-      "facing": 0,
-      "material": "",
-      "material_overrides": [],
-      "animation": "",
-      "clip": 0,
-      "play_rate": 1,
-      "looping": true,
-      "playing": true,
-      "root_motion": false,
-      "anim_graph": "b3d7338ec0564bb1b58f5d8d626ff732",
-      "morphs": [],
-      "leader_pose": ""
-    }},
-    {"id": 28, "name": "Coin", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 8,
-        "y": 0,
-        "z": 0.400000006
+    {
+      "id": 1,
+      "name": "Sky",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
       },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.699999988,
-        "y": 0.699999988,
-        "z": 0.699999988
+      "Sky": {
+        "atmosphere": true,
+        "zenith": {
+          "r": 0.184313729,
+          "g": 0.435294122,
+          "b": 0.768627465,
+          "a": 1
+        },
+        "horizon": {
+          "r": 0.721568644,
+          "g": 0.823529422,
+          "b": 0.917647064,
+          "a": 1
+        },
+        "ground": {
+          "r": 0.290196091,
+          "g": 0.274509817,
+          "b": 0.250980407,
+          "a": 1
+        },
+        "brightness": 1,
+        "sun_disc": true,
+        "sun_size": 0.800000012,
+        "sun_color": {
+          "r": 1,
+          "g": 0.949019611,
+          "b": 0.839215696,
+          "a": 1
+        },
+        "hdri": ""
       }
     },
-     "StaticMesh": {
-      "mesh": "Sphere",
-      "material": "",
-      "color": {
-        "r": 1,
-        "g": 0.800000012,
-        "b": 0.100000001,
-        "a": 1
+    {
+      "id": 2,
+      "name": "Floor",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": -0.100000001
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 40,
+          "y": 40,
+          "z": 0.200000003
+        }
       },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "TriggerVolume": {
-      "enabled": true,
-      "enter_sound": ""
-    },
-     "Script": {
-      "script": "d56f2f61a82d40f6fa20fc442756725c",
-      "properties": []
-    }},
-    {"id": 29, "name": "Coin", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -8,
-        "y": -2,
-        "z": 0.400000006
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.699999988,
-        "y": 0.699999988,
-        "z": 0.699999988
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.541176498,
+          "g": 0.541176498,
+          "b": 0.556862772,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
       }
     },
-     "StaticMesh": {
-      "mesh": "Sphere",
-      "material": "",
-      "color": {
-        "r": 1,
-        "g": 0.800000012,
-        "b": 0.100000001,
-        "a": 1
+    {
+      "id": 3,
+      "name": "Wall",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -20,
+          "y": 0,
+          "z": 1.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.5,
+          "y": 40,
+          "z": 3
+        }
       },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "TriggerVolume": {
-      "enabled": true,
-      "enter_sound": ""
-    },
-     "Script": {
-      "script": "d56f2f61a82d40f6fa20fc442756725c",
-      "properties": []
-    }},
-    {"id": 30, "name": "Coin", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": 12,
-        "z": 0.400000006
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.699999988,
-        "y": 0.699999988,
-        "z": 0.699999988
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.431372553,
+          "g": 0.431372553,
+          "b": 0.454901963,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
       }
     },
-     "StaticMesh": {
-      "mesh": "Sphere",
-      "material": "",
-      "color": {
-        "r": 1,
-        "g": 0.800000012,
-        "b": 0.100000001,
-        "a": 1
+    {
+      "id": 4,
+      "name": "Wall",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 20,
+          "y": 0,
+          "z": 1.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.5,
+          "y": 40,
+          "z": 3
+        }
       },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "TriggerVolume": {
-      "enabled": true,
-      "enter_sound": ""
-    },
-     "Script": {
-      "script": "d56f2f61a82d40f6fa20fc442756725c",
-      "properties": []
-    }},
-    {"id": 31, "name": "Coin", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 12,
-        "y": 12,
-        "z": 0.400000006
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.699999988,
-        "y": 0.699999988,
-        "z": 0.699999988
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.431372553,
+          "g": 0.431372553,
+          "b": 0.454901963,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
       }
     },
-     "StaticMesh": {
-      "mesh": "Sphere",
-      "material": "",
-      "color": {
-        "r": 1,
-        "g": 0.800000012,
-        "b": 0.100000001,
-        "a": 1
+    {
+      "id": 5,
+      "name": "Wall",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 0,
+          "y": -20,
+          "z": 1.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 40,
+          "y": 0.5,
+          "z": 3
+        }
       },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "TriggerVolume": {
-      "enabled": true,
-      "enter_sound": ""
-    },
-     "Script": {
-      "script": "d56f2f61a82d40f6fa20fc442756725c",
-      "properties": []
-    }},
-    {"id": 32, "name": "Coin", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -14,
-        "y": -14,
-        "z": 0.400000006
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.699999988,
-        "y": 0.699999988,
-        "z": 0.699999988
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.431372553,
+          "g": 0.431372553,
+          "b": 0.454901963,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
       }
     },
-     "StaticMesh": {
-      "mesh": "Sphere",
-      "material": "",
-      "color": {
-        "r": 1,
-        "g": 0.800000012,
-        "b": 0.100000001,
-        "a": 1
+    {
+      "id": 6,
+      "name": "Wall",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 0,
+          "y": 20,
+          "z": 1.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 40,
+          "y": 0.5,
+          "z": 3
+        }
       },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "TriggerVolume": {
-      "enabled": true,
-      "enter_sound": ""
-    },
-     "Script": {
-      "script": "d56f2f61a82d40f6fa20fc442756725c",
-      "properties": []
-    }},
-    {"id": 33, "name": "Coin", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 14,
-        "y": -12,
-        "z": 0.400000006
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.699999988,
-        "y": 0.699999988,
-        "z": 0.699999988
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.431372553,
+          "g": 0.431372553,
+          "b": 0.454901963,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
       }
     },
-     "StaticMesh": {
-      "mesh": "Sphere",
-      "material": "",
-      "color": {
-        "r": 1,
-        "g": 0.800000012,
-        "b": 0.100000001,
-        "a": 1
+    {
+      "id": 7,
+      "name": "Ramp",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 6,
+          "y": 6,
+          "z": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": -18,
+          "z": 0
+        },
+        "scale": {
+          "x": 6,
+          "y": 4,
+          "z": 0.300000012
+        }
       },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "TriggerVolume": {
-      "enabled": true,
-      "enter_sound": ""
-    },
-     "Script": {
-      "script": "d56f2f61a82d40f6fa20fc442756725c",
-      "properties": []
-    }},
-    {"id": 34, "name": "Coin", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -4,
-        "y": -14,
-        "z": 0.400000006
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.699999988,
-        "y": 0.699999988,
-        "z": 0.699999988
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.815686285,
+          "g": 0.541176498,
+          "b": 0.235294119,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 1,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
       }
     },
-     "StaticMesh": {
-      "mesh": "Sphere",
-      "material": "",
-      "color": {
-        "r": 1,
-        "g": 0.800000012,
-        "b": 0.100000001,
-        "a": 1
+    {
+      "id": 8,
+      "name": "Step",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -6,
+          "y": 6,
+          "z": 0.150000006
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 3,
+          "z": 0.300000012
+        }
       },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "TriggerVolume": {
-      "enabled": true,
-      "enter_sound": ""
-    },
-     "Script": {
-      "script": "d56f2f61a82d40f6fa20fc442756725c",
-      "properties": []
-    }},
-    {"id": 35, "name": "Coin", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -14,
-        "y": 14,
-        "z": 0.400000006
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.699999988,
-        "y": 0.699999988,
-        "z": 0.699999988
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.611764729,
+          "g": 0.611764729,
+          "b": 0.643137276,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
       }
     },
-     "StaticMesh": {
-      "mesh": "Sphere",
-      "material": "",
-      "color": {
-        "r": 1,
-        "g": 0.800000012,
-        "b": 0.100000001,
-        "a": 1
+    {
+      "id": 9,
+      "name": "Step",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -6.80000019,
+          "y": 6,
+          "z": 0.450000018
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 3,
+          "z": 0.900000036
+        }
       },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "TriggerVolume": {
-      "enabled": true,
-      "enter_sound": ""
-    },
-     "Script": {
-      "script": "d56f2f61a82d40f6fa20fc442756725c",
-      "properties": []
-    }},
-    {"id": 36, "name": "Guard", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": -14,
-        "y": 14,
-        "z": 0
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 0.800000012,
-        "y": 0.800000012,
-        "z": 1.79999995
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.611764729,
+          "g": 0.611764729,
+          "b": 0.643137276,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
       }
     },
-     "StaticMesh": {
-      "mesh": "Cube",
-      "material": "",
-      "color": {
-        "r": 0.800000012,
-        "g": 0.100000001,
-        "b": 0.100000001,
-        "a": 1
+    {
+      "id": 10,
+      "name": "Step",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -7.5999999,
+          "y": 6,
+          "z": 0.75
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 3,
+          "z": 1.5
+        }
       },
-      "collision": false,
-      "one_way": false,
-      "collision_shape": 0,
-      "physical_material": "",
-      "box_uv": false,
-      "max_draw_distance": 0,
-      "static_lighting": true
-    },
-     "NavAgent": {
-      "max_speed": 4,
-      "radius": 0.400000006,
-      "height": 1.79999995,
-      "face_movement": true
-    },
-     "Script": {
-      "script": "35a67075917d9ed16e61438805d61af8",
-      "properties": []
-    }},
-    {"id": 37, "name": "Nav Mesh Bounds", "parent": -1,
-     "Transform": {
-      "position": {
-        "x": 0,
-        "y": 0,
-        "z": -0.5
-      },
-      "rotation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      },
-      "scale": {
-        "x": 40,
-        "y": 40,
-        "z": 6
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.611764729,
+          "g": 0.611764729,
+          "b": 0.643137276,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
       }
     },
-     "NavMeshBounds": {
-      "enabled": true
-    }}
+    {
+      "id": 11,
+      "name": "Step",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -8.39999962,
+          "y": 6,
+          "z": 1.05000007
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 3,
+          "z": 2.10000014
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.611764729,
+          "g": 0.611764729,
+          "b": 0.643137276,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      }
+    },
+    {
+      "id": 12,
+      "name": "Step",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -9.19999981,
+          "y": 6,
+          "z": 1.35000002
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 3,
+          "z": 2.70000005
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.611764729,
+          "g": 0.611764729,
+          "b": 0.643137276,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      }
+    },
+    {
+      "id": 13,
+      "name": "Step",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -10,
+          "y": 6,
+          "z": 1.64999998
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 3,
+          "z": 3.29999995
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.611764729,
+          "g": 0.611764729,
+          "b": 0.643137276,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      }
+    },
+    {
+      "id": 14,
+      "name": "Ledge",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -12,
+          "y": 6,
+          "z": 1.89999998
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 4,
+          "y": 6,
+          "z": 0.200000003
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.611764729,
+          "g": 0.611764729,
+          "b": 0.643137276,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      }
+    },
+    {
+      "id": 15,
+      "name": "Column",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -6,
+          "y": -8,
+          "z": 2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 0.800000012,
+          "z": 4
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.486274511,
+          "g": 0.486274511,
+          "b": 0.517647088,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      }
+    },
+    {
+      "id": 16,
+      "name": "Column",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -2,
+          "y": -8,
+          "z": 2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 0.800000012,
+          "z": 4
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.486274511,
+          "g": 0.486274511,
+          "b": 0.517647088,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      }
+    },
+    {
+      "id": 17,
+      "name": "Column",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 2,
+          "y": -8,
+          "z": 2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 0.800000012,
+          "z": 4
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.486274511,
+          "g": 0.486274511,
+          "b": 0.517647088,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      }
+    },
+    {
+      "id": 18,
+      "name": "Column",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 6,
+          "y": -8,
+          "z": 2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 0.800000012,
+          "z": 4
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.486274511,
+          "g": 0.486274511,
+          "b": 0.517647088,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      }
+    },
+    {
+      "id": 19,
+      "name": "Crate",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 2,
+          "y": -3,
+          "z": 0.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.784313738,
+          "g": 0.627451003,
+          "b": 0.376470596,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "RigidBody": {
+        "shape": 0,
+        "lock_2d": false,
+        "mass": 10,
+        "friction": 0.5,
+        "bounciness": 0,
+        "physical_material": "",
+        "collision_preset": 0,
+        "kinematic": false
+      }
+    },
+    {
+      "id": 20,
+      "name": "Crate",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 3.20000005,
+          "y": -3,
+          "z": 0.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.784313738,
+          "g": 0.627451003,
+          "b": 0.376470596,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "RigidBody": {
+        "shape": 0,
+        "lock_2d": false,
+        "mass": 10,
+        "friction": 0.5,
+        "bounciness": 0,
+        "physical_material": "",
+        "collision_preset": 0,
+        "kinematic": false
+      }
+    },
+    {
+      "id": 21,
+      "name": "Crate",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 4.4000001,
+          "y": -3,
+          "z": 0.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.784313738,
+          "g": 0.627451003,
+          "b": 0.376470596,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "RigidBody": {
+        "shape": 0,
+        "lock_2d": false,
+        "mass": 10,
+        "friction": 0.5,
+        "bounciness": 0,
+        "physical_material": "",
+        "collision_preset": 0,
+        "kinematic": false
+      }
+    },
+    {
+      "id": 22,
+      "name": "Crate",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 2,
+          "y": -4.19999981,
+          "z": 0.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.784313738,
+          "g": 0.627451003,
+          "b": 0.376470596,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "RigidBody": {
+        "shape": 0,
+        "lock_2d": false,
+        "mass": 10,
+        "friction": 0.5,
+        "bounciness": 0,
+        "physical_material": "",
+        "collision_preset": 0,
+        "kinematic": false
+      }
+    },
+    {
+      "id": 23,
+      "name": "Crate",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 3.20000005,
+          "y": -4.19999981,
+          "z": 0.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.784313738,
+          "g": 0.627451003,
+          "b": 0.376470596,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "RigidBody": {
+        "shape": 0,
+        "lock_2d": false,
+        "mass": 10,
+        "friction": 0.5,
+        "bounciness": 0,
+        "physical_material": "",
+        "collision_preset": 0,
+        "kinematic": false
+      }
+    },
+    {
+      "id": 24,
+      "name": "Crate",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 4.4000001,
+          "y": -4.19999981,
+          "z": 0.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.784313738,
+          "g": 0.627451003,
+          "b": 0.376470596,
+          "a": 1
+        },
+        "collision": true,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "RigidBody": {
+        "shape": 0,
+        "lock_2d": false,
+        "mass": 10,
+        "friction": 0.5,
+        "bounciness": 0,
+        "physical_material": "",
+        "collision_preset": 0,
+        "kinematic": false
+      }
+    },
+    {
+      "id": 25,
+      "name": "Player",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0.0500000007
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 90
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "Character": {
+        "mapping_context": "",
+        "move_action": "",
+        "look_action": "",
+        "jump_action": "",
+        "side_scroller": false,
+        "motion_matching": false,
+        "motion_database": "",
+        "walk_speed": 5,
+        "jump_speed": 5,
+        "max_slope": 45,
+        "step_height": 0.400000006,
+        "height": 1.79999995,
+        "radius": 0.349999994,
+        "eye_height": 1.64999998,
+        "look_sensitivity": 0.150000006,
+        "invert_look_y": false,
+        "camera_distance": 3.5,
+        "camera_offset": {
+          "x": 0,
+          "y": -0.5,
+          "z": 0.200000003
+        },
+        "crouch_action": "",
+        "crouch_height": 1.10000002,
+        "crouch_speed": 2.5,
+        "swim_speed": 3
+      }
+    },
+    {
+      "id": 26,
+      "name": "Body",
+      "parent": 25,
+      "Transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0.9
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.6,
+          "y": 0.45,
+          "z": 1.8
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.878,
+          "g": 0.478,
+          "b": 0.18,
+          "a": 1
+        },
+        "cast_shadows": true,
+        "collision": false
+      }
+    },
+    {
+      "id": 28,
+      "name": "Coin",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 8,
+          "y": 0,
+          "z": 0.400000006
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.699999988,
+          "y": 0.699999988,
+          "z": 0.699999988
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Sphere",
+        "material": "",
+        "color": {
+          "r": 1,
+          "g": 0.800000012,
+          "b": 0.100000001,
+          "a": 1
+        },
+        "collision": false,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "TriggerVolume": {
+        "enabled": true,
+        "enter_sound": ""
+      },
+      "Script": {
+        "script": "d56f2f61a82d40f6fa20fc442756725c",
+        "properties": []
+      }
+    },
+    {
+      "id": 29,
+      "name": "Coin",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -8,
+          "y": -2,
+          "z": 0.400000006
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.699999988,
+          "y": 0.699999988,
+          "z": 0.699999988
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Sphere",
+        "material": "",
+        "color": {
+          "r": 1,
+          "g": 0.800000012,
+          "b": 0.100000001,
+          "a": 1
+        },
+        "collision": false,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "TriggerVolume": {
+        "enabled": true,
+        "enter_sound": ""
+      },
+      "Script": {
+        "script": "d56f2f61a82d40f6fa20fc442756725c",
+        "properties": []
+      }
+    },
+    {
+      "id": 30,
+      "name": "Coin",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 0,
+          "y": 12,
+          "z": 0.400000006
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.699999988,
+          "y": 0.699999988,
+          "z": 0.699999988
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Sphere",
+        "material": "",
+        "color": {
+          "r": 1,
+          "g": 0.800000012,
+          "b": 0.100000001,
+          "a": 1
+        },
+        "collision": false,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "TriggerVolume": {
+        "enabled": true,
+        "enter_sound": ""
+      },
+      "Script": {
+        "script": "d56f2f61a82d40f6fa20fc442756725c",
+        "properties": []
+      }
+    },
+    {
+      "id": 31,
+      "name": "Coin",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 12,
+          "y": 12,
+          "z": 0.400000006
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.699999988,
+          "y": 0.699999988,
+          "z": 0.699999988
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Sphere",
+        "material": "",
+        "color": {
+          "r": 1,
+          "g": 0.800000012,
+          "b": 0.100000001,
+          "a": 1
+        },
+        "collision": false,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "TriggerVolume": {
+        "enabled": true,
+        "enter_sound": ""
+      },
+      "Script": {
+        "script": "d56f2f61a82d40f6fa20fc442756725c",
+        "properties": []
+      }
+    },
+    {
+      "id": 32,
+      "name": "Coin",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -14,
+          "y": -14,
+          "z": 0.400000006
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.699999988,
+          "y": 0.699999988,
+          "z": 0.699999988
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Sphere",
+        "material": "",
+        "color": {
+          "r": 1,
+          "g": 0.800000012,
+          "b": 0.100000001,
+          "a": 1
+        },
+        "collision": false,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "TriggerVolume": {
+        "enabled": true,
+        "enter_sound": ""
+      },
+      "Script": {
+        "script": "d56f2f61a82d40f6fa20fc442756725c",
+        "properties": []
+      }
+    },
+    {
+      "id": 33,
+      "name": "Coin",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 14,
+          "y": -12,
+          "z": 0.400000006
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.699999988,
+          "y": 0.699999988,
+          "z": 0.699999988
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Sphere",
+        "material": "",
+        "color": {
+          "r": 1,
+          "g": 0.800000012,
+          "b": 0.100000001,
+          "a": 1
+        },
+        "collision": false,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "TriggerVolume": {
+        "enabled": true,
+        "enter_sound": ""
+      },
+      "Script": {
+        "script": "d56f2f61a82d40f6fa20fc442756725c",
+        "properties": []
+      }
+    },
+    {
+      "id": 34,
+      "name": "Coin",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -4,
+          "y": -14,
+          "z": 0.400000006
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.699999988,
+          "y": 0.699999988,
+          "z": 0.699999988
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Sphere",
+        "material": "",
+        "color": {
+          "r": 1,
+          "g": 0.800000012,
+          "b": 0.100000001,
+          "a": 1
+        },
+        "collision": false,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "TriggerVolume": {
+        "enabled": true,
+        "enter_sound": ""
+      },
+      "Script": {
+        "script": "d56f2f61a82d40f6fa20fc442756725c",
+        "properties": []
+      }
+    },
+    {
+      "id": 35,
+      "name": "Coin",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -14,
+          "y": 14,
+          "z": 0.400000006
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.699999988,
+          "y": 0.699999988,
+          "z": 0.699999988
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Sphere",
+        "material": "",
+        "color": {
+          "r": 1,
+          "g": 0.800000012,
+          "b": 0.100000001,
+          "a": 1
+        },
+        "collision": false,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "TriggerVolume": {
+        "enabled": true,
+        "enter_sound": ""
+      },
+      "Script": {
+        "script": "d56f2f61a82d40f6fa20fc442756725c",
+        "properties": []
+      }
+    },
+    {
+      "id": 36,
+      "name": "Guard",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": -14,
+          "y": 14,
+          "z": 0
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.800000012,
+          "y": 0.800000012,
+          "z": 1.79999995
+        }
+      },
+      "StaticMesh": {
+        "mesh": "Cube",
+        "material": "",
+        "color": {
+          "r": 0.800000012,
+          "g": 0.100000001,
+          "b": 0.100000001,
+          "a": 1
+        },
+        "collision": false,
+        "one_way": false,
+        "collision_shape": 0,
+        "physical_material": "",
+        "box_uv": false,
+        "max_draw_distance": 0,
+        "static_lighting": true
+      },
+      "NavAgent": {
+        "max_speed": 4,
+        "radius": 0.400000006,
+        "height": 1.79999995,
+        "face_movement": true
+      },
+      "Script": {
+        "script": "35a67075917d9ed16e61438805d61af8",
+        "properties": []
+      }
+    },
+    {
+      "id": 37,
+      "name": "Nav Mesh Bounds",
+      "parent": -1,
+      "Transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": -0.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 40,
+          "y": 40,
+          "z": 6
+        }
+      },
+      "NavMeshBounds": {
+        "enabled": true
+      }
+    }
   ]
 }

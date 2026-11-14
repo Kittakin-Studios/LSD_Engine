@@ -7,8 +7,8 @@ them from scratch. It must never contain code or data derived from proprietary e
 
 - Public blog posts, conference talks, papers and books (read, learn, then write our own code).
 - Open-source code under a permissive licence (MIT, BSD, zlib, Apache-2.0, public domain),
-  added under `third_party/` with its licence file kept. LSD_Engine is proprietary, so avoid
-  GPL code entirely, and use LGPL code only as a separately linked library.
+  added under `third_party/` with its licence file kept. LSD_Engine is MIT-licensed, so avoid
+  GPL code entirely (it would force the whole engine under the GPL), and use LGPL code only as a separately linked library.
 - Our own names, file formats and APIs.
 
 ## Not allowed

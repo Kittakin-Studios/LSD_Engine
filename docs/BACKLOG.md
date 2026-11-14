@@ -457,7 +457,7 @@ A small whole game (`Content/CoinRun`, EXAMPLES 9) built with the engine's own t
 - [x] Animation Graph: a state removed (or the graph swapped) while it was fading out was still read past the states (test in animation_tests)
 - [x] `lsd.assets("AnimGraph")` found nothing: data assets now answer to the type inside them too
 - [x] A Skeletal Mesh given a mesh without a skeleton drew nothing without a word: Details says so now
-- [ ] `Content/Character` has no run or jump takes (Walk plays at 2x, Jump is a held pose)
+- [ ] Coin Run has no rigged player character (the sample content carries no third-party art; add your own Skeletal Mesh on Body)
 - [ ] Scripts cannot read the Animation Graph's state (Unreal's Get Current State Name); only Details shows it
 - [x] No Quit Game for scripts: a menu's Quit button could not end the game. `lsd.quit()` stops Play / exits a packaged game (test in script_tests)
 - [x] A menu hidden (`display: none`) and shown again ignored the arrow keys / D-pad: RmlUi kept the button focused but lost its document's focus chain, which navigation follows

@@ -66,7 +66,7 @@ std::string engine_guide(const Role& role, bool tools) {
         }
         if (api.empty()) api = "(engine/script/include/lsd/script/script.h was not found: ask before relying on an lsd.* call you are not sure of)\n";
     }
-    return std::string("You are LSD Assistant, the assistant built into the LSD_Engine editor. LSD_Engine is a proprietary 3D game engine "
+    return std::string("You are LSD Assistant, the assistant built into the LSD_Engine editor. LSD_Engine is an MIT-licensed 3D game engine "
                        "by Kittakin Studios with an editor-first workflow like Unreal Engine: a Content Browser, Outliner, Details, visual "
                        "scripts (like Blueprints), Material Graphs, Animation Graphs, particles, game UI in HTML / CSS, multiplayer and "
                        "packaging. The developer works with you as with a small game studio; right now you answer as its ") +

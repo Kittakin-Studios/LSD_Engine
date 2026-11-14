@@ -26,13 +26,7 @@ function run(self)
   lsd.add(g, "NavAgent", {max_speed = 4})
   lsd.add(g, "Script", {script = guard})
 
-  -- The player: the template's cube body becomes the rigged soldier, animated by ABP_CoinRun
-  -- (Idle / Walk / Jump from the Character's Speed and InAir).
-  local body = lsd.find("Body")
-  lsd.remove(body, "StaticMesh")
-  lsd.set(body, "Transform", {position = {x = 0, y = 0, z = 0}, scale = {x = 1, y = 1, z = 1}})
-  lsd.add(body, "SkeletalMesh", {mesh = guid("Mesh", "FBX_Char01_Update_Rig", "Character"), anim_graph = guid("AnimGraph", "ABP_CoinRun")})
-  lsd.destroy(lsd.find("Facing"))
+  -- The player keeps the template's cube body (put a rigged Skeletal Mesh on "Body" to give it a character).
 
   local nav = lsd.spawn("Cube", 0, 0, -0.5)
   lsd.set_name(nav, "Nav Mesh Bounds")

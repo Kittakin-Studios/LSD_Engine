@@ -1,0 +1,36 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1  # cl.exe / link.exe on PATH for the Ninja generator
+      - name: Configure
+        run: cmake --preset windows-msvc
+      - name: Build (Debug)
+        run: cmake --build --preset windows-msvc
+      - name: Test
+        run: ctest --preset windows-msvc
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld cmake ninja-build pkg-config libx11-dev libxext-dev libxrandr-dev \
+            libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl1-mesa-dev libgl1-mesa-dev libdrm-dev libgbm-dev libasound2-dev \
+            libpulse-dev libudev-dev libdbus-1-dev libvulkan-dev
+      - name: Configure
+        run: cmake --preset linux-clang
+      - name: Build
+        run: cmake --build --preset linux-clang
+      - name: Test
+        run: ctest --preset linux-clang

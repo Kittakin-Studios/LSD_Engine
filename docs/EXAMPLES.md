@@ -308,7 +308,7 @@ A Cube gun in a character's right hand: 10/10 ammo, RMB aims, LMB shoots, R relo
 dot set in Details. One Script component, Weapon, that works on any rigged character. The lesson
 text in the editor walks through every line of its code, with these pictures.
 
-1. Select the character (the soldier, `FBX_Char01_Update_Rig`) in the Outliner.
+1. Select your rigged character (any Skeletal Mesh on a UE4 / UE5-style skeleton with a `hand_r` bone) in the Outliner.
 2. **Tools > LSD Assistant**, the **Lessons** tab, **Gun on a hand socket**, then **Apply to
    Selected Character**. It writes `Content/Weapon/Weapon.lua` and `WBP_Crosshair.rml`, makes
    `IA_Aim` (Right Mouse Button), `IA_Fire` (Left Mouse Button) and `IA_Reload` (R) and adds them to
@@ -396,32 +396,20 @@ end message, the best time and Play again / Quit come back in the same menu. Eve
 
 | File | What it is |
 | --- | --- |
-| `CoinRun.lsdlevel` | the Third Person template's arena with the coins, the guard and a Nav Mesh Bounds; the player is the rigged soldier |
-| `ABP_CoinRun.lsdasset` | the player's Animation Graph (Unreal's Anim Blueprint state machine): Idle, Walk, Jump |
+| `CoinRun.lsdlevel` | the Third Person template's arena with the coins, the guard and a Nav Mesh Bounds; the player is the template's cube body |
 | `CoinRun_Game.lua` | the Level Script (World Settings): menu, HUD, timer, win / lose; counts the coins with `lsd.find_all("Coin")` |
 | `CoinRun_Coin.lua` | spins; `on_overlap_begin` plays `S_Coin`, spawns `PS_CoinBurst`, counts it and destroys it |
 | `CoinRun_Guard.lua` | a Nav Agent: waits while a menu is up, walks the corners with `lsd.move_to`, chases within 10 m, catches at 1.6 m |
 | `UI_CoinRun.rml` | the HUD and the menu (`#menu`, its buttons call `coinrun_play` / `coinrun_quit`) |
 | `S_Coin.wav` | the pickup blip (two short sine notes, made by a script) |
 | `PS_CoinBurst` | a Particle System: one burst of 40 additive sparks, not looping, so the spawned effect deletes itself |
-| `EU_BuildCoinRun.lua` | the Editor Utility that placed it all: spawns, `lsd.set_name`, the player's Skeletal Mesh (`lsd.assets("AnimGraph")` finds the graph), `lsd.set_world_settings({level_script = ...})` |
+| `EU_BuildCoinRun.lua` | the Editor Utility that placed it all: spawns, `lsd.set_name`, `lsd.set_world_settings({level_script = ...})` |
 
-**The player** (Unreal: a Skeletal Mesh on the Character with an Anim Blueprint): the template's cube
-body is now a Skeletal Mesh, `Content/Character/FBX_Char01_Update_Rig` (its materials come from its Material
-Slots), on the `Body` child of `Player` at the feet (position 0, scale 1, Facing Auto: a UE5 rig is turned to
-face +X). Its **Anim Graph** is `ABP_CoinRun`; double-click it for the State Machine window:
-
-| State | Plays | Gets there when |
-| --- | --- | --- |
-| Idle (entry) | `Anim_Idle_Sheath` | Speed < 0.3, or from Jump when InAir is False |
-| Walk | `Anim_Walk` at Play Rate 2 | Speed > 0.3 |
-| Jump | `Anim_Walk` held on its first frame (Play Rate 0, not looping) | InAir is True, from any state |
-
-The Character fills Speed and InAir every frame; the clips are UE5 Manny takes, retargeted onto the soldier
-by bone name when they load. Select `Body` while playing: Details > Skeletal Mesh shows the state ("State:
-Walk (blending from Idle)"). `Content/Character` has no run or jump take, so Walk plays twice as fast for the
-5 m/s Walk Speed (the feet still slide a little) and Jump is a held pose; drop a run take in and make Walk a
-blend space on Speed (walk at 1.5, run at 5) when you have one.
+**The player** (Unreal: the Third Person template's Character): the template's capsule with its cube `Body`
+and `Facing` nose. To give it a character, put a rigged Skeletal Mesh on `Body` (position 0, scale 1, Facing Auto
+turns a UE5 rig to face +X) and an Animation Graph with Idle / Walk / Jump states driven by the Character's
+Speed and InAir (Unreal's Anim Blueprint state machine); set the Walk state's Sync Speed to the speed its clip
+was made for so the feet do not slide.
 
 How the parts work:
 
