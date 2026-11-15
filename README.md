@@ -12,6 +12,21 @@ By [Kittakin Studios](https://github.com/Kittakin-Studios).
 ![The LSD_Engine editor](docs/images/editor_overview.jpg)
 *The editor: menu bar, Play / Simulate, workspace tabs, viewport, Outliner, Details and the Content Browser.*
 
+## Download
+
+Get the latest Windows build from [Releases](https://github.com/Kittakin-Studios/LSD_Engine/releases/latest):
+
+- **`LSD_Engine_Setup.exe`**: the installer. It installs for your user only (no administrator rights) into
+  `%LOCALAPPDATA%\Programs\LSD_Engine`, adds a Start Menu (and optional desktop) shortcut and an uninstaller.
+- **`LSD_Engine_Windows.zip`**: the portable version. Unzip it anywhere you can write to and double-click `lsd_editor.exe`.
+
+Both hold the editor (also the game runtime), the sample project (Coin Run and the Quaternius character) and the docs.
+The editor keeps its project in its own folder (`Content/`, `Config/`, and the `Saved/` / `DerivedData/` it writes), so do not unzip into `Program Files`.
+
+System requirements: Windows 10 or 11, 64-bit; a graphics card with Direct3D 12, Vulkan 1.3 or OpenGL 4.6.
+For C / C++ game code you also need Visual Studio 2022 or newer with *Desktop development with C++*.
+Linux users build from source (see [Building](#building)).
+
 ## Screenshots
 
 | | |

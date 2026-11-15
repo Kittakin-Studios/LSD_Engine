@@ -33,6 +33,24 @@ Contents
 
 ## 1. Getting started
 
+### Install (no build)
+
+Download **`LSD_Engine_Setup.exe`** (installer) or **`LSD_Engine_Windows.zip`** (portable) from the
+[latest release](https://github.com/Kittakin-Studios/LSD_Engine/releases/latest), like Unreal's launcher
+install but without the launcher. The installer is per user (no administrator rights): it goes to
+`%LOCALAPPDATA%\Programs\LSD_Engine` with a Start Menu shortcut, an optional desktop shortcut and an
+uninstaller (Settings > Apps); the documentation is an optional component. The zip unpacks anywhere you
+can write to. Either way, start **`lsd_editor.exe`** in that folder: the folder is the project (the sample
+`Content/`, `Config/`, and `Saved/` / `DerivedData/` written as you work), so it must not be read-only
+(not `Program Files`). Windows 10 / 11 x64 and a GPU with Direct3D 12, Vulkan 1.3 or OpenGL 4.6.
+Building from source (below) is only needed to change the engine itself, or on Linux.
+
+How the release is made: `packaging/make_portable.ps1` assembles the folder from a Release build
+(the exe, the MCP bridge, the app-local Visual C++ runtime, the sample project, the C / C++ game API
+headers, the licences, the docs) and zips it; `packaging/LSD_Engine.iss` (Inno Setup 6) installs that
+folder. `.github/workflows/release.yml` runs both when a `v*` tag is pushed and attaches the two files to
+a GitHub Release (or, run by hand from the Actions tab, as downloadable workflow artifacts).
+
 ### Build
 
 LSD_Engine builds with CMake and MSVC (Visual Studio 2026) on Windows; Clang on Linux.

@@ -1,0 +1,51 @@
+name: Release
+
+# A pushed tag v* (git tag v0.1.0 && git push origin v0.1.0) builds LSD_Engine_Setup.exe and
+# LSD_Engine_Windows.zip and publishes them as a GitHub Release. Run it by hand (Actions > Release >
+# Run workflow) for the same two files as workflow artifacts, without a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true  # the sample Content's meshes, textures and sounds
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: cmake --preset windows-msvc
+      - name: Build (Release)
+        run: cmake --build --preset windows-msvc --config Release --target lsd_editor lsd_mcp
+      - name: Portable folder and zip
+        run: powershell -ExecutionPolicy Bypass -File packaging/make_portable.ps1
+      - name: Installer
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(LSD_Engine VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          & $iscc "/DAppVersion=$version" packaging\LSD_Engine.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LSD_Engine_Windows
+          path: |
+            build/package/LSD_Engine_Setup.exe
+            build/package/LSD_Engine_Windows.zip
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/package/LSD_Engine_Setup.exe
+            build/package/LSD_Engine_Windows.zip

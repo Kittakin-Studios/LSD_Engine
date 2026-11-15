@@ -28,7 +28,9 @@ Contents: [Quick start](#quick-start) · [Project layout](#project-layout) ·
    Compile Game Code): the new code loads by itself, also while playing.
 
 You need Visual Studio 2022 or newer with **Desktop development with C++** (the same one that
-builds the engine). The editor finds it on its own.
+builds the engine). The editor finds it on its own. The installed engine (`LSD_Engine_Setup.exe` or the
+portable zip) carries the headers game code compiles against (`engine/game_api/include`), so C / C++
+scripts work there too, without the engine's source.
 
 ## Project layout
 
