@@ -1,19 +1,43 @@
 # LSD_Engine
 
-A data-oriented, editor-first 3D game engine by Kittakin Studios.
+![Build and test](https://github.com/Kittakin-Studios/LSD_Engine/actions/workflows/build.yml/badge.svg)
 
-- **Core:** C++20, data-oriented design, generational handles, hashed IDs, per-system allocators
-- **Gameplay:** LuaJIT and visual scripting, both generated from one reflection layer
-- **Graphics:** one RHI with Direct3D 12, Vulkan and OpenGL 4.6 backends; NVIDIA, AMD and Intel GPUs
-- **Scaling:** picks the best GPU automatically, sizes memory use to live VRAM and RAM budgets, scales jobs to CPU cores
-- **Editor:** Unreal-style workflow — Content Browser, asset editors, Details panel, Play-in-Editor
+**An MIT-licensed, data-oriented 3D game engine with an Unreal-style, editor-first workflow.**
+Import a file, find it in the Content Browser, open it in its own editor, wire it up by clicking.
+Code is for new behaviour, never for hooking up content.
 
-The full documentation (manual, tutorials, architecture, roadmap) is in [`docs/`](docs/).
+C++20 core. Gameplay in LuaJIT, visual scripts, C / C++ or JavaScript. Direct3D 12, Vulkan and OpenGL 4.6 backends behind one RHI. Windows and Linux.
+By [Kittakin Studios](https://github.com/Kittakin-Studios).
+
+![The LSD_Engine editor](docs/images/editor_overview.jpg)
+*The editor: menu bar, Play / Simulate, workspace tabs, viewport, Outliner, Details and the Content Browser.*
+
+## Screenshots
+
+| | |
+| --- | --- |
+| [![Time of day](docs/images/gfx_time_of_day.jpg)](docs/GRAPHICS.md) <br> Sky, sun and reflections at two times of day | [![Rect lights](docs/images/gfx_rect_lights.jpg)](docs/GRAPHICS.md) <br> Rect and Disc lights |
+| [![Particle editor](docs/images/ed_particles.jpg)](docs/MANUAL.md) <br> Particle editor with live preview | [![Material graph](docs/images/ed_material_graph.jpg)](docs/MANUAL.md) <br> Material Graph with live preview |
+| [![Visual script](docs/images/ed_visual_script.jpg)](docs/MANUAL.md) <br> Visual scripting, compiled to Lua | [![2D mode](docs/images/template_2d.jpg)](docs/MANUAL.md) <br> 2D mode: tile maps, sprites, flipbooks |
+| [![3D modeling](docs/images/mode_modeling_edit.jpg)](docs/MANUAL.md) <br> 3D Modeling mode: extrude, bevel, inset | [![Multiplayer workspace](docs/images/mp_workspace.jpg)](docs/Multiplayer.md) <br> Multiplayer workspace: host, join codes |
+
+## What it has
+
+- **Architecture:** data-oriented. Entities are generational handles, components are reflected plain structs in packed pools, systems loop over arrays. Text source assets and hot reload.
+- **Reflection:** one `LSD_STRUCT` / `LSD_PROPERTY` layer and a code generator give the Details panel, JSON save / load, undo, Lua access and Play copies.
+- **Gameplay languages:** LuaJIT, visual scripts (compiled to Lua), C / C++ game modules (reloaded on rebuild) and JavaScript (QuickJS-ng).
+- **Graphics:** D3D12 (default), Vulkan 1.3 and OpenGL 4.6 backends; PBR, shadows, skinned meshes, particles, Material Graphs, SSAO, TAA, depth of field, bloom, baked lightmaps and light probes, reflection captures, CPU and GPU culling.
+- **Editor:** Content Browser, Outliner, Details, Play-in-Editor, undo, asset editors for materials, animation graphs, particles, behaviour trees, UI and visual scripts, and Level modes (3D Modeling, Foliage, Landscape, PCG, VFX, 2D).
+- **Systems:** Jolt physics and character controller, Recast / Detour navigation, behaviour trees, ozz animation with motion matching, miniaudio, RmlUi (HTML / CSS) game UI, localisation, save games, packaging.
+- **Multiplayer:** ENet replication, text and voice chat, playtests by join code.
+- **LSD Assistant:** an optional in-editor AI helper that uses your own model (Anthropic or OpenAI-compatible).
+- **Scaling:** picks the best GPU, sizes memory use to VRAM and RAM budgets, scales jobs to CPU cores.
+
+The ideas come from the public Bitsquid / Stingray talks, implemented from scratch under a [clean-room rule](docs/CLEAN_ROOM.md).
 
 ## Status
 
-![The LSD_Engine editor](docs/images/editor_overview.jpg)
-*The editor: menu bar, Play, workspaces, viewport, Outliner, Details, Content Browser and the asset editor dock.*
+Milestones 0 to 7 are done and each has an exit test. CI builds and runs the 15 CTest tests on Windows (MSVC) and Linux (Clang) on every push, and both compilers build with 0 warnings.
 
 | # | Milestone | State |
 | --- | --- | --- |
@@ -24,11 +48,7 @@ The full documentation (manual, tutorials, architecture, roadmap) is in [`docs/`
 | 6 | Vertical slice: packaging, save games, AI, game UI, localisation, profiling | Done |
 | 7 | Gameplay languages: C / C++ game code, JavaScript scripts | Done |
 
-Since then: multiplayer (one checkbox), text and voice chat, vehicles / transports / movers, 2D
-(Paper2D), sub-level streaming, Unreal-style post-processing (Color Grading LUT, motion blur, contact shadows), mesh and ribbon
-particles, montages and root motion, CPU occlusion culling, cooked Shipping packages, and LSD Assistant (an in-editor AI that
-writes and tests code, with lessons). Every feature
-by milestone is in [docs/BACKLOG.md](docs/BACKLOG.md).
+Some items are partial (marked in the backlog). Every feature by milestone, ticked when done, is in [docs/BACKLOG.md](docs/BACKLOG.md); plans are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Documentation
 
@@ -39,6 +59,8 @@ by milestone is in [docs/BACKLOG.md](docs/BACKLOG.md).
 | [EXAMPLES](docs/EXAMPLES.md) | Step-by-step tutorials (a first level, a HUD, a guard AI, a menu, a campfire, shipping) |
 | [How to code in LSD_Engine](docs/How%20to%20code%20in%20LSD_Engine.md) | Lua and visual scripts from scratch |
 | [CODING](docs/CODING.md) | C / C++ gameplay and every command |
+| [GRAPHICS](docs/GRAPHICS.md) | Step by step to high-end graphics |
+| [Multiplayer](docs/Multiplayer.md) | Playtests: join codes, Tailscale |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | How the engine works inside |
 
 ## Building
@@ -46,7 +68,7 @@ by milestone is in [docs/BACKLOG.md](docs/BACKLOG.md).
 Requirements: CMake 3.24+, a C++20 compiler (MSVC 2022, Clang 16+ or GCC 13+), Ninja recommended.
 
 ```sh
-# Windows (Visual Studio 2022 developer prompt)
+# Windows (Visual Studio 2022 developer prompt; CI uses windows-2022)
 cmake --preset windows-msvc
 cmake --build --preset windows-msvc
 cmake --build --preset windows-msvc --config Release   # also copies lsd_editor.exe to the project root
@@ -97,10 +119,6 @@ docs/           architecture, roadmap, clean-room rules
 third_party/    vendored or fetched dependencies
 ```
 
-## Clean-room rule
-
-LSD_Engine is written from scratch. See [`docs/CLEAN_ROOM.md`](docs/CLEAN_ROOM.md) before contributing.
-
 ## Contributing
 
 Issues and pull requests are welcome. Before you send code:
@@ -109,7 +127,7 @@ Issues and pull requests are welcome. Before you send code:
 - Keep both compilers at 0 warnings (MSVC `/W4`, Clang `-Wall -Wextra -Wpedantic -Wshadow -Wconversion`) and `ctest` passing.
 - New dependencies must be permissive (MIT, BSD, zlib, Apache-2.0, public domain), pinned in `third_party/CMakeLists.txt`
   and listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-- Sample content in `Content/` must be your own work or CC0.
+- Sample content in `Content/` must be your own work or CC0. The sample character, its animations and textures (`Content/Character/Quaternius/`) are by [Quaternius](https://quaternius.com), CC0 ([LICENSE.txt](Content/Character/Quaternius/LICENSE.txt)).
 
 ## License
 
