@@ -1,16 +1,28 @@
 # LSD_Engine
 
 ![Build and test](https://github.com/Kittakin-Studios/LSD_Engine/actions/workflows/build.yml/badge.svg)
+![Status: Work in progress](https://img.shields.io/badge/status-work%20in%20progress-orange)
+![Version: early alpha](https://img.shields.io/badge/version-early%20alpha-yellow)
+![License: MIT OR CC0-1.0](https://img.shields.io/badge/license-MIT%20OR%20CC0--1.0-blue)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus)
+![Platforms: Windows | Linux](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-lightgrey)
+![Graphics: D3D12 | Vulkan | OpenGL](https://img.shields.io/badge/graphics-D3D12%20%7C%20Vulkan%20%7C%20OpenGL-red)
 
-**An MIT-licensed, data-oriented 3D game engine with an Unreal-style, editor-first workflow.**
-Import a file, find it in the Content Browser, open it in its own editor, wire it up by clicking.
-Code is for new behaviour, never for hooking up content.
-
-C++20 core. Gameplay in LuaJIT, visual scripts, C / C++ or JavaScript. Direct3D 12, Vulkan and OpenGL 4.6 backends behind one RHI. Windows and Linux.
-By [Kittakin Studios](https://github.com/Kittakin-Studios).
+A data-oriented, editor-first 3D game engine by [Kittakin Studios](https://github.com/Kittakin-Studios).
 
 ![The LSD_Engine editor](docs/images/editor_overview.jpg)
 *The editor: menu bar, Play / Simulate, workspace tabs, viewport, Outliner, Details and the Content Browser.*
+
+> [!WARNING]
+> **LSD_Engine is new and still a work in progress.**
+> The engine was started in 2026 and is in early alpha. All the milestones below run, but many features are first versions that still need testing, polish and optimisation.
+>
+> - **Expect bugs and crashes.** Save often and keep your projects in version control.
+> - **Things will change.** APIs, file formats and editor layouts can still change between versions. Projects made now may need updating later.
+> - **Not production-ready yet.** It's great for learning, prototypes and small games. For a commercial release, test carefully on your target hardware first.
+> - **Documentation is still growing.** Some pages may be missing or out of date.
+>
+> Bug reports, feedback and contributions are very welcome.
 
 ## Download
 
@@ -27,32 +39,46 @@ System requirements: Windows 10 or 11, 64-bit; a graphics card with Direct3D 12,
 For C / C++ game code you also need Visual Studio 2022 or newer with *Desktop development with C++*.
 Linux users build from source (see [Building](#building)).
 
-## Screenshots
+## What is LSD_Engine?
+
+LSD_Engine is a complete engine for building 3D (and 2D) games, written from scratch in C++20. It gives you an editor where you build levels, import and edit assets, and write gameplay, plus a runtime that packages and runs the finished game on Windows and Linux.
+
+If you have used Unreal Engine, the workflow will feel familiar. You place objects in a viewport, select them in the Outliner, edit their properties in the Details panel, manage assets in the Content Browser, and press **Play** to test the game inside the editor. The engine itself is built differently from Unreal: it is lightweight, data-oriented and designed to scale to whatever hardware it runs on.
+
+### What you can do with it
+
+- **Build worlds.** Place, move and edit objects with gizmos and full undo. Make prefabs and stream sub-levels in and out. Sculpt landscapes, paint foliage and model blockouts in the editor.
+- **Write gameplay in the language you prefer.** Use Lua (LuaJIT), visual scripting, C/C++ or JavaScript. Visual scripts compile to Lua, and all of them share the same `lsd` API.
+- **Add physics, characters and vehicles.** Jolt physics, a ready-made character controller, vehicles, transports, moving platforms and mesh fracture.
+- **Create content inside the editor.** Material graphs, animation graphs (including montages, root motion and motion matching), audio and particle editors. Particles support mesh and ribbon types.
+- **Make it look good.** PBR, shadows, baked lightmaps and light probes, reflection captures, and Unreal-style post-processing (SSAO, TAA, bloom, depth of field, a Color Grading LUT, motion blur, contact shadows). CPU and GPU culling keep scenes fast.
+- **Add game systems.** AI (navigation, behaviour trees), game UI and HUDs in HTML / CSS, input actions, save games, localisation and profiling are built in.
+- **Go online with one checkbox.** Built-in multiplayer with text and voice chat, and playtests by join code.
+- **Make 2D games too.** Paper2D-style sprites, flipbooks and tile maps.
+- **Ship it.** Cook and package optimised Shipping builds.
+- **Get help while you work.** LSD Assistant is an optional in-editor AI helper that uses your own model, writes and tests code, and comes with lessons.
+
+### Screenshots
 
 | | |
 | --- | --- |
-| [![Time of day](docs/images/gfx_time_of_day.jpg)](docs/GRAPHICS.md) <br> Sky, sun and reflections at two times of day | [![Rect lights](docs/images/gfx_rect_lights.jpg)](docs/GRAPHICS.md) <br> Rect and Disc lights |
-| [![Particle editor](docs/images/ed_particles.jpg)](docs/MANUAL.md) <br> Particle editor with live preview | [![Material graph](docs/images/ed_material_graph.jpg)](docs/MANUAL.md) <br> Material Graph with live preview |
-| [![Visual script](docs/images/ed_visual_script.jpg)](docs/MANUAL.md) <br> Visual scripting, compiled to Lua | [![2D mode](docs/images/template_2d.jpg)](docs/MANUAL.md) <br> 2D mode: tile maps, sprites, flipbooks |
-| [![3D modeling](docs/images/mode_modeling_edit.jpg)](docs/MANUAL.md) <br> 3D Modeling mode: extrude, bevel, inset | [![Multiplayer workspace](docs/images/mp_workspace.jpg)](docs/Multiplayer.md) <br> Multiplayer workspace: host, join codes |
+| [![Time of day](docs/images/gfx_time_of_day.jpg)](docs/GRAPHICS.md) <br> *Sky, sun and reflections at two times of day* | [![Rect lights](docs/images/gfx_rect_lights.jpg)](docs/GRAPHICS.md) <br> *Rect and Disc lights* |
+| [![Particle editor](docs/images/ed_particles.jpg)](docs/MANUAL.md) <br> *Particle editor with live preview* | [![Material graph](docs/images/ed_material_graph.jpg)](docs/MANUAL.md) <br> *Material Graph with live preview* |
+| [![Visual script](docs/images/ed_visual_script.jpg)](docs/MANUAL.md) <br> *Visual scripting, compiled to Lua* | [![2D mode](docs/images/template_2d.jpg)](docs/MANUAL.md) <br> *2D mode: tile maps, sprites, flipbooks* |
+| [![3D modeling](docs/images/mode_modeling_edit.jpg)](docs/MANUAL.md) <br> *3D Modeling mode: extrude, bevel, inset* | [![Multiplayer workspace](docs/images/mp_workspace.jpg)](docs/Multiplayer.md) <br> *Multiplayer workspace: host, join codes* |
 
-## What it has
+### How it works under the hood
 
-- **Architecture:** data-oriented. Entities are generational handles, components are reflected plain structs in packed pools, systems loop over arrays. Text source assets and hot reload.
-- **Reflection:** one `LSD_STRUCT` / `LSD_PROPERTY` layer and a code generator give the Details panel, JSON save / load, undo, Lua access and Play copies.
-- **Gameplay languages:** LuaJIT, visual scripts (compiled to Lua), C / C++ game modules (reloaded on rebuild) and JavaScript (QuickJS-ng).
-- **Graphics:** D3D12 (default), Vulkan 1.3 and OpenGL 4.6 backends; PBR, shadows, skinned meshes, particles, Material Graphs, SSAO, TAA, depth of field, bloom, baked lightmaps and light probes, reflection captures, CPU and GPU culling.
-- **Editor:** Content Browser, Outliner, Details, Play-in-Editor, undo, asset editors for materials, animation graphs, particles, behaviour trees, UI and visual scripts, and Level modes (3D Modeling, Foliage, Landscape, PCG, VFX, 2D).
-- **Systems:** Jolt physics and character controller, Recast / Detour navigation, behaviour trees, ozz animation with motion matching, miniaudio, RmlUi (HTML / CSS) game UI, localisation, save games, packaging.
-- **Multiplayer:** ENet replication, text and voice chat, playtests by join code.
-- **LSD Assistant:** an optional in-editor AI helper that uses your own model (Anthropic or OpenAI-compatible).
-- **Scaling:** picks the best GPU, sizes memory use to VRAM and RAM budgets, scales jobs to CPU cores.
+- **Core:** C++20 with data-oriented design. Entities are generational handles, components are reflected plain structs in packed pools, and systems loop over arrays. Text source assets and hot reload everywhere.
+- **Reflection:** one `LSD_STRUCT` / `LSD_PROPERTY` layer and a code generator give the Details panel, JSON save / load, undo, Lua access and Play copies for free.
+- **Graphics:** one rendering interface (RHI) with Direct3D 12 (default), Vulkan 1.3 and OpenGL 4.6 backends. It runs on NVIDIA, AMD and Intel GPUs.
+- **Scaling:** the engine picks the best GPU automatically, sizes memory use to the VRAM and RAM actually available, and spreads work across all CPU cores.
 
 The ideas come from the public Bitsquid / Stingray talks, implemented from scratch under a [clean-room rule](docs/CLEAN_ROOM.md).
 
 ## Status
 
-Milestones 0 to 7 are done and each has an exit test. CI builds and runs the 15 CTest tests on Windows (MSVC) and Linux (Clang) on every push, and both compilers build with 0 warnings.
+**Early alpha, work in progress.** The core engine and editor are in place. The current focus is stability, performance, documentation and polishing the features below. CI builds and runs the 15 CTest tests on Windows (MSVC) and Linux (Clang) on every push, and both compilers build with 0 warnings.
 
 | # | Milestone | State |
 | --- | --- | --- |
@@ -63,7 +89,7 @@ Milestones 0 to 7 are done and each has an exit test. CI builds and runs the 15 
 | 6 | Vertical slice: packaging, save games, AI, game UI, localisation, profiling | Done |
 | 7 | Gameplay languages: C / C++ game code, JavaScript scripts | Done |
 
-Some items are partial (marked in the backlog). Every feature by milestone, ticked when done, is in [docs/BACKLOG.md](docs/BACKLOG.md); plans are in [docs/ROADMAP.md](docs/ROADMAP.md).
+"Done" means a milestone's features work. It does not mean they are finished: some items are partial, and each one will keep improving as the engine grows. Every feature by milestone, ticked when done, is in [docs/BACKLOG.md](docs/BACKLOG.md); plans are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Documentation
 
@@ -80,7 +106,7 @@ Some items are partial (marked in the backlog). Every feature by milestone, tick
 
 ## Building
 
-Requirements: CMake 3.24+, a C++20 compiler (MSVC 2022, Clang 16+ or GCC 13+), Ninja recommended.
+Requirements: CMake 3.24+, a C++20 compiler (MSVC 2022, Clang 16+ or GCC 13+). Ninja is recommended.
 
 ```sh
 # Windows (Visual Studio 2022 developer prompt; CI uses windows-2022)
@@ -100,6 +126,8 @@ cmake --build --preset linux-clang
 ctest --preset linux-clang
 ./build/linux-clang/runtime/lsd_runtime -rhi=vulkan
 ```
+
+To make the Windows downloads yourself: `packaging/make_portable.ps1` builds the portable zip, and `packaging/LSD_Engine.iss` (Inno Setup 6) the installer. Pushing a `v*` tag runs both on GitHub and publishes a release.
 
 ### Build options
 
@@ -130,7 +158,8 @@ editor/         the editor application
 tools/          data compiler and other command-line tools
 runtime/        game executable
 tests/          unit tests
-docs/           architecture, roadmap, clean-room rules
+packaging/      Windows installer and portable zip
+docs/           manual, tutorials, architecture, roadmap, clean-room rules
 third_party/    vendored or fetched dependencies
 ```
 
@@ -146,7 +175,17 @@ Issues and pull requests are welcome. Before you send code:
 
 ## License
 
-MIT — Copyright (c) 2026 Kittakin Studios. See [LICENSE](LICENSE).
-Third-party components keep their own licences. The full list of dependencies, versions and
-licences is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — ship it (or its FreeType
-credit line) with the engine, and keep FreeType built under its permissive FreeType Licence.
+LSD_Engine is free and open source. Copyright (c) 2026 Charlize Pauli (Kittakin Studios).
+
+You may use it under **either** of these licenses, whichever you prefer:
+
+- **MIT License** — see [`LICENSE-MIT`](LICENSE-MIT)
+- **CC0 1.0 Universal** (public domain dedication) — see [`LICENSE-CC0`](LICENSE-CC0)
+
+In short, you can use and modify the engine for free, and sell and ship the games you make with it, with no fees or royalties.
+
+SPDX identifier: `MIT OR CC0-1.0`
+
+### Third-party components
+
+Third-party components are not covered by the licenses above and keep their own licenses. The full list of dependencies, versions and licenses is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Ship it (or its FreeType credit line) with the engine, and keep FreeType built under its permissive FreeType License.
